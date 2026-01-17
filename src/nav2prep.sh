@@ -92,4 +92,15 @@ for pkg in "${nav2_packages[@]}"; do
   $SUDO apt install -y --fix-missing "$pkg" || echo "跳过 $pkg，继续安装其他包..."
 done
 
+
+
+sudo apt-get update
+sudo apt-get install -y \
+    ros-foxy-turtlebot3* \
+    ros-foxy-gazebo-ros-pkgs \
+    ros-foxy-robot-state-publisher \
+    ros-foxy-joint-state-publisher
+
+
+    
 echo "安装完成！"
