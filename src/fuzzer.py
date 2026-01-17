@@ -455,7 +455,7 @@ def inspect_target(fuzzer):
             "std_msgs", "Empty"
         )
         fuzz_targets.append([topic_name, msg_type_class, "/rosidl_node"])
-
+        print("fuzz_targets:\n",fuzz_targets)
         return fuzz_targets
 
     elif fuzzer.config.test_moveit:
@@ -1166,6 +1166,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
 
 
 def main(config):
+    print("Walkiiy fored robofuzzer")
     print(
         """\
                           ____
