@@ -23,6 +23,5 @@ docker run --rm -it \
   -e DISPLAY="$DISPLAY" \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   --name "$CONTAINER_NAME" \
-  -v "$FUZZING_FILE:/robofuzz/src/fuzzer.py" \
-  -v "$LOGS_DIR:/robofuzz/src/logs" \
+  -v "$SCRIPT_DIR:/robofuzz/src" \
   "$IMAGE" "$@"

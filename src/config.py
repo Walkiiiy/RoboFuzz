@@ -24,12 +24,18 @@ class RuntimeConfig:
         self.rospkg = None
         self.rosnode = None
         self.exec_cmd = None
+        self.target_node = None
 
         self.px4_sitl = False
         self.tb3_sitl = False
         self.tb3_hitl = False
         self.sros2 = False
         self.test_rcl = False
+        self.nav2_amcl = False
+        self.post_pub_sleep = 0.0
+        self.nav2_scan_len = 360
+        self.nav2_map_default_width = 384
+        self.nav2_map_default_height = 384
 
     def find_package_metadata(self):
         # read from provided meta file

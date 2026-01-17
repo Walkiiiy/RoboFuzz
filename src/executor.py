@@ -247,19 +247,24 @@ class Executor:
 
         out = open("out", "w")
         err = open("err", "w")
-        sp.call(
-            [
-                "ros2",
-                "topic",
-                "pub",
-                "--once",
-                self.topic_name,
-                self.msg_typestr,
-                message_to_yaml(msg),
-            ],
-            stdout=out,
-            stderr=err,
-        )
+        cmd = [
+            "ros2",
+            "topic",
+            "pub",
+            "--once",
+            self.topic_name,
+            self.msg_typestr,
+            message_to_yaml(msg),
+        ]
+        if self.fuzzer.config.nav2_amcl and self.topic_name == "/map":
+            cmd.extend([
+                "--qos-durability",
+                "transient_local",
+                "--qos-reliability",
+                "reliable",
+            ])
+
+        sp.call(cmd, stdout=out, stderr=err)
         out.close()
         err.close()
 
@@ -401,6 +406,9 @@ class Executor:
                     time.sleep(0.2)
                     if not os.path.isfile(wait_lock):
                         break
+
+            if self.fuzzer.config.post_pub_sleep > 0:
+                time.sleep(self.fuzzer.config.post_pub_sleep)
 
             exec_cnt += 1
 

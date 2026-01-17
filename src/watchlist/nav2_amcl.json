@@ -1,0 +1,7 @@
+{
+    "/amcl_pose": "geometry_msgs/msg/PoseWithCovarianceStamped",
+    "/particlecloud": "geometry_msgs/msg/PoseArray",
+    "/tf": "tf2_msgs/msg/TFMessage",
+    "/map": "nav_msgs/msg/OccupancyGrid",
+    "/diagnostics": "diagnostic_msgs/msg/DiagnosticArray"
+}

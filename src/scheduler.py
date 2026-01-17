@@ -12,7 +12,6 @@ import mutator
 import harness
 import ros_utils
 from ros2_fuzzer import ros_commons
-import px4_utils
 from px4_prep.blacklist import blacklist as param_blacklist
 from px4_prep.blacklist import tested as param_tested
 
@@ -264,6 +263,7 @@ class Scheduler:
         return (self.msg, frame)
 
     def mutate_px4_param(self, config):
+        import px4_utils
         frame = str(time.time())
 
         meta_file = os.path.join(config.meta_dir, "meta-{}".format(frame))

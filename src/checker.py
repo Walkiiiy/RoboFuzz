@@ -22,6 +22,7 @@ import oracles.turtlebot
 import oracles.px4
 import oracles.moveit
 import oracles.rosidl
+import oracles.nav2_amcl
 
 
 class StateMonitorNode(Node):
@@ -135,6 +136,9 @@ def run_checks(config, msg_list, state_dict, feedback_list=[]):
             return errs
 
         errs = oracles.turtlesim.check(config, msg_list, pose_list, feedback_list)
+
+    elif config.nav2_amcl or config.rospkg == "nav2_amcl":
+        errs = oracles.nav2_amcl.check(config, msg_list, state_dict, feedback_list)
 
     elif config.tb3_sitl or config.tb3_hitl:
         if (

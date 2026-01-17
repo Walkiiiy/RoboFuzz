@@ -385,7 +385,8 @@ class Fuzzer:
         # kill target if still exists
         self.kill_target()
         self.kill_monitor()
-        self.executor.kill_rosbag()
+        if hasattr(self, "executor"):
+            self.executor.kill_rosbag()
 
         # clear subscriptions
         if self.node_ptr is not None:
@@ -410,6 +411,15 @@ class Fuzzer:
 
 def inspect_target(fuzzer):
     fuzz_targets = []
+
+    def node_matches(subscriber_node, target_node):
+        if not target_node:
+            return True
+        if subscriber_node == target_node:
+            return True
+        if target_node.startswith("/"):
+            return subscriber_node == target_node
+        return subscriber_node.endswith("/" + target_node)
 
     built_in_msg_types = ros_utils.get_all_message_types()
     subscriptions = ros_utils.get_subscriptions(fuzzer.node_ptr)
@@ -482,6 +492,10 @@ def inspect_target(fuzzer):
             print("[-] skip internal node")
             continue
 
+        if not node_matches(subscriber_node, fuzzer.config.target_node):
+            print("[-] skip non-target node")
+            continue
+
         for ti, topic in enumerate(subscriptions[subscriber_node]):
             topic_name = topic[0]
             msg_type_full = topic[1]
@@ -498,6 +512,12 @@ def inspect_target(fuzzer):
             if msg_name == "ParameterEvent":
                 print("[-] skip ParameterEvents")
                 continue
+
+            if fuzzer.config.nav2_amcl:
+                allowed_topics = {"/scan", "/initialpose", "/map"}
+                if topic_name not in allowed_topics:
+                    print("[-] skip non-nav2_amcl topic")
+                    continue
 
             if msg_pkg in built_in_msg_types.keys():
                 msg_type_class = ros_utils.get_msg_class_from_name(
@@ -567,6 +587,47 @@ def inspect_secure_target(fuzzer):
 
     fuzzer.kill_target()
     return fuzz_targets
+
+
+def nav2_amcl_adjust_msg(fuzzer, msg):
+    msg_name = type(msg).__name__
+
+    if msg_name == "LaserScan":
+        if msg.ranges is None or len(msg.ranges) == 0:
+            msg.ranges = [5.0] * fuzzer.config.nav2_scan_len
+        if msg.intensities is None or len(msg.intensities) == 0:
+            msg.intensities = [0.0] * len(msg.ranges)
+
+        range_min = msg.range_min if msg.range_min > 0 else 0.05
+        range_max = msg.range_max if msg.range_max > range_min else 10.0
+        for _ in range(random.randint(1, 5)):
+            idx = random.randint(0, len(msg.ranges) - 1)
+            if random.randint(0, 10) == 0:
+                msg.ranges[idx] = mutator.gen_special_floats()
+            else:
+                msg.ranges[idx] = mutator.gen_float_in_range(
+                    int(range_min), int(range_max), 3
+                )
+
+        return msg
+
+    if msg_name == "OccupancyGrid":
+        width = msg.info.width or fuzzer.config.nav2_map_default_width
+        height = msg.info.height or fuzzer.config.nav2_map_default_height
+        msg.info.width = width
+        msg.info.height = height
+
+        expected_len = width * height
+        if msg.data is None or len(msg.data) != expected_len:
+            msg.data = [0] * expected_len
+
+        for _ in range(random.randint(1, 10)):
+            idx = random.randint(0, expected_len - 1)
+            msg.data[idx] = random.choice([-1, 0, 100])
+
+        return msg
+
+    return msg
 
 
 def fuzz_msg(fuzzer, fuzz_targets):
@@ -668,6 +729,45 @@ def fuzz_msg(fuzzer, fuzz_targets):
             ]
             # field_whitelist = None
 
+        elif fuzzer.config.nav2_amcl:
+            msg_name = msg_type_class.__name__
+            if msg_name == "LaserScan":
+                field_whitelist = [
+                    ["angle_min", np.dtype("float32")],
+                    ["angle_max", np.dtype("float32")],
+                    ["angle_increment", np.dtype("float32")],
+                    ["time_increment", np.dtype("float32")],
+                    ["scan_time", np.dtype("float32")],
+                    ["range_min", np.dtype("float32")],
+                    ["range_max", np.dtype("float32")],
+                ]
+            elif msg_name == "PoseWithCovarianceStamped":
+                field_whitelist = [
+                    ["pose", "pose", "position", "x", np.dtype("float64")],
+                    ["pose", "pose", "position", "y", np.dtype("float64")],
+                    ["pose", "pose", "position", "z", np.dtype("float64")],
+                    ["pose", "pose", "orientation", "x", np.dtype("float64")],
+                    ["pose", "pose", "orientation", "y", np.dtype("float64")],
+                    ["pose", "pose", "orientation", "z", np.dtype("float64")],
+                    ["pose", "pose", "orientation", "w", np.dtype("float64")],
+                ]
+            elif msg_name == "OccupancyGrid":
+                field_whitelist = [
+                    ["info", "resolution", np.dtype("float32")],
+                    ["info", "width", np.dtype("uint32")],
+                    ["info", "height", np.dtype("uint32")],
+                    ["info", "origin", "position", "x", np.dtype("float64")],
+                    ["info", "origin", "position", "y", np.dtype("float64")],
+                    ["info", "origin", "position", "z", np.dtype("float64")],
+                    ["info", "origin", "orientation", "x", np.dtype("float64")],
+                    ["info", "origin", "orientation", "y", np.dtype("float64")],
+                    ["info", "origin", "orientation", "z", np.dtype("float64")],
+                    ["info", "origin", "orientation", "w", np.dtype("float64")],
+                ]
+            else:
+                print("[nav2_amcl] unsupported msg type:", msg_name)
+                continue
+
         elif "turtlebot3_drive" in fuzzer.config.exec_cmd:
             field_whitelist = [
                 # ["pose", "pose", "orientation", "x", np.dtype("float64")],
@@ -751,6 +851,9 @@ def fuzz_msg(fuzzer, fuzz_targets):
 
         msg_list = None
         while True:
+            if fuzzer.config.maxloop and fuzzer.loop >= fuzzer.config.maxloop:
+                print("[*] maxloop reached, stopping fuzzing loop")
+                break
             errs = []
 
             if scheduler.campaign == Campaign.RND_SINGLE:
@@ -849,6 +952,10 @@ def fuzz_msg(fuzzer, fuzz_targets):
 
             if msg_list is None:
                 continue
+
+            if fuzzer.config.nav2_amcl:
+                for i, msg in enumerate(msg_list):
+                    msg_list[i] = nav2_amcl_adjust_msg(fuzzer, msg)
 
             executor.prep_execution(msg_type_class, topic_name)
 
@@ -958,6 +1065,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
             # fuzzer.oh_.check_oracle() # will move everything into checker
             # (turtlesim, sros, ...)
             executor.clear_execution()
+            fuzzer.loop += 1
 
             if retval:
                 errs.append(f"publish failed: {failure_msg}")
@@ -1250,7 +1358,16 @@ def main(config):
 
         else:
             try:
-                fuzz_targets = inspect_target(fuzzer)
+                if config.nav2_amcl:
+                    fuzz_targets = []
+                    for _ in range(5):
+                        fuzz_targets = inspect_target(fuzzer)
+                        if len(fuzz_targets) > 0:
+                            break
+                        print("[nav2_amcl] target not found, waiting...")
+                        time.sleep(2)
+                else:
+                    fuzz_targets = inspect_target(fuzzer)
 
                 if not config.persistent:
                     fuzzer.kill_target()
@@ -1322,7 +1439,7 @@ if __name__ == "__main__":
     )
     argparser.add_argument(
         "--maxloop",
-        default=100,
+        default=0,
         type=int,
         help="number of iterations, 0 for infinite",
     )
@@ -1343,6 +1460,12 @@ if __name__ == "__main__":
         type=str,
         help="name of core node to fuzz \
                                  (e.g., turtlesim_node)",
+    )
+    argparser.add_argument(
+        "--target-node",
+        type=str,
+        default=None,
+        help="only fuzz topics subscribed by this node name",
     )
     argparser.add_argument(
         "--exec-cmd",
@@ -1411,6 +1534,11 @@ if __name__ == "__main__":
         "--no-cov",
         action="store_true",
         help="assume no coverage data (do not create shm)",
+    )
+    argparser.add_argument(
+        "--nav2-amcl",
+        action="store_true",
+        help="shortcut to testing nav2_amcl (filters topics and sets defaults)",
     )
     argparser.add_argument(
         "--persistent",
@@ -1506,6 +1634,7 @@ if __name__ == "__main__":
     config.rospkg = args.ros_pkg
     config.rosnode = args.ros_node
     config.watchlist = args.watchlist
+    config.target_node = args.target_node
 
     if args.schedule == "single":
         config.schedule = Campaign.RND_SINGLE
@@ -1582,6 +1711,20 @@ if __name__ == "__main__":
         config.rosnode = "sros2_node"
     else:
         config.sros2 = False
+
+    if args.nav2_amcl:
+        config.nav2_amcl = True
+        config.post_pub_sleep = 1.0
+        if config.rospkg is None:
+            config.rospkg = "nav2_amcl"
+        if config.rosnode is None:
+            config.rosnode = "amcl"
+        if args.target_node is None:
+            config.target_node = "amcl"
+        if args.watchlist == "watchlist/empty.json":
+            config.watchlist = "watchlist/nav2_amcl.json"
+    else:
+        config.nav2_amcl = False
 
     if args.fuzz_seed:
         config.fuzz_seed = args.fuzz_seed
@@ -1689,7 +1832,7 @@ if __name__ == "__main__":
     config.exec_cmd = None
     ret = config.find_package_metadata()
 
-    if ret < 0:
+    if args.exec_cmd is not None:
         if args.exec_cmd == "px4":
             # PX4-specific
             px4_root = os.path.join(
@@ -1708,9 +1851,9 @@ if __name__ == "__main__":
             ]
             px4_cmd = "{} {}".format(sitl_script, " ".join(sitl_opts))
             config.exec_cmd = px4_cmd
-        elif args.exec_cmd is not None:
-            config.exec_cmd = args.exec_cmd
         else:
-            config.exec_cmd = ""
+            config.exec_cmd = args.exec_cmd
+    elif ret < 0:
+        config.exec_cmd = ""
 
     main(config)

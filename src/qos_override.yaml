@@ -3,3 +3,8 @@
   durability: transient_local
   history: keep_last
   depth: 30
+/map:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 1
