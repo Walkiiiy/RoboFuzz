@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "pulling robofuzz docker origin image..." 
-docker pull ghcr.io/sslab-gatech/robofuzz:latest
+# echo "pulling robofuzz docker origin image..." 
+# docker pull ghcr.io/sslab-gatech/robofuzz:latest
+# docker tag ghcr.io/sslab-gatech/robofuzz:latest robofuzz
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE="${IMAGE:-robofuzz}"
