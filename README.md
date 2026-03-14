@@ -1,320 +1,634 @@
-# RoboFuzz
+# RoboFuzz（中文工程说明）
 
-RoboFuzz is a fuzzing framework for testing Robot Operating System 2 (ROS 2),
-and robotic systems that are built using ROS 2. Any developer-defined
-properties relating to the correctness of the robotic system under test,
-e.g., conformance to specification, can be tested using RoboFuzz.
+> 本文档是对当前仓库（`/home/walkiiiy/RoboFuzz`）的完整工程级说明，覆盖：
+> 1) 整体架构与工作流程；
+> 2) 关键模块与接口（函数/类/CLI）；
+> 3) 逐文件说明（含脚本、配置、数据与测试）；
+> 4) 如何接入新的 fuzz 项目。
 
-For technical details,
-please check our [paper](https://seulbae-security.github.io/pubs/robofuzz-fse22.pdf),
-"RoboFuzz: Fuzzing Robotic Systems over Robot Operating System (ROS)
-for Finding Correctness Bugs", which was published in ESEC/FSE 2022.
+## 1. 项目目标与定位
 
-We tested six targets with RoboFuzz;
+RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它不是只看崩溃的二进制 fuzzer，而是“消息变异 + 状态录制 + 领域 oracle 校验 + 反馈引导”的系统测试框架。
 
-* Two from the internal layers of ROS2 foxy:
-  1. Type system (ROSIDL)
-  2. ROS Client Library APIs (rclpy and rclcpp)
+当前代码支持/适配的测试方向包括：
+- 通用 ROS topic 消息 fuzz
+- PX4（SITL，ROS 通道 / MAVLink 通道 / 参数变异）
+- TurtleBot3（SITL / HITL）
+- MoveIt2（Panda）
+- ROSIDL 类型系统测试
+- RCL API 跨语言一致性测试
+- CLI 与 API 一致性测试
+- Nav2 AMCL 场景（仓库内新增了 `--nav2-amcl` 分支与辅助脚本）
 
-* Four ROS-based robotic systems/libraries:
+## 2. 高层架构
 
-  3. Turtlesim (apt pkg: ros-foxy-turtlesim)
-  4. Move It 2 + PANDA manipulator (included in moveit2_tutorials)
-  5. TurtleBot3 Burger (ver. foxy)
-  6. PX4 quadcopter (firmware v1.12 + fmu-v5)
+核心链路由以下模块构成：
 
-We built test oracles by studying and encoding the correctness semantics
-of each target. These oracles are capable of detecting three types of semantic
-correctness bugs:
-1. Violation of physical laws
-2. Violation of specification
-3. Cyber-physical discrepancy
+1. `fuzzer.py`（总控）
+- 解析参数、初始化日志目录、构建 `RuntimeConfig`
+- 启停目标系统（通过 `harness.py`）
+- 发现可 fuzz 目标 topic（`inspect_target`）
+- 调度变异（`Scheduler`）
+- 执行发布与录包（`Executor`）
+- 解析 rosbag（`RosbagParser`）
+- 调用 oracle（`checker.run_checks`）
+- 依据反馈更新队列（feedback-driven queue）
 
+2. `scheduler.py`（策略调度）
+- 管理 Cycle / Round
+- 支持 single/sequence/repeated/idl_check 等 campaign
+- 负责选择字段、阶段（deterministic/havoc）并调用 `mutator.py`
 
-## Getting RoboFuzz
+3. `mutator.py`（变异引擎）
+- 生成随机初始值
+- 提供 AFL 风格 bit/byte/arith/interesting 变异
+- 支持 int/float/bool/string 等类型
+- 支持 ROSIDL 类型空间变异（builtin + array extension）
 
-Before you start, please refer to `REQUIREMENTS.md` for hardware and software
-requirements, and check `INSTALL.md` for the instructions on the installation
-and basic usage.
+4. `executor.py`（执行器）
+- 每轮执行前后动作（pre/post hooks）
+- 发布消息（默认 `ros2 topic pub --once`）
+- 启停 rosbag 录制
+- 持久化发送队列样本（`logs/.../queue/msg-*`）
 
-In a nutshell, you can obtain and use RoboFuzz by getting the docker image:
+5. `checker.py` + `oracles/*`（语义校验）
+- 根据测试模式分发到对应 oracle
+- 比较状态消息，输出错误列表
+- 维护 RCL API checker / Collision checker（PX4）
+
+6. `rosbag_parser.py`
+- 解析 rosbag2 sqlite（`.db3`）
+- 根据 `/tmp/start_ts` 与 `/tmp/end_ts` 做时间窗过滤
+
+7. `harness.py`
+- 把不同目标系统启动方式统一成函数接口
+- PX4/TB3/MoveIt/RCL/CLI/ROSIDL 的启动入口在此封装
+
+## 3. 一次 fuzz 执行的端到端流程
+
+1. 启动：`python3 src/fuzzer.py ...`
+2. 初始化：日志目录、queue、可选 shm、可选 PX4 bridge
+3. 启动目标（`run_target`）
+4. 发现目标 topic 与消息类型（`inspect_target`）
+5. 对每个目标创建 `Scheduler`、`Executor`、反馈向量
+6. 每一轮：
+- `Scheduler` 产出变异消息（或消息序列）
+- `Executor` 启动 rosbag 录制、发布消息、停止录制
+- `RosbagParser` 解析录制状态
+- `checker.run_checks` 调 oracle
+- 若报错：落盘 `errors/` + 复制 rosbag 到 `rosbags/{frame}`
+- 若反馈更“有趣”：把样本压回 queue
+7. 达到 `--maxloop` 或手动中断后清理进程与资源
+
+## 4. 运行入口与 CLI 接口（`src/fuzzer.py`）
+
+### 4.1 主入口
+- `main(config)`：主流程控制
+- `fuzz_msg(fuzzer, fuzz_targets)`：消息 fuzz 主循环
+- `inspect_target(fuzzer)`：根据 ROS graph 发现可 fuzz 订阅
+- `inspect_secure_target(fuzzer)`：SROS2 场景发现订阅
+- `nav2_amcl_adjust_msg(fuzzer, msg)`：Nav2 输入消息补全/修正
+
+### 4.2 `Fuzzer` 类接口
+- `init_cov_map()`：覆盖率共享内存初始化（部分模式跳过）
+- `init_shm_data()`：数据共享内存（ROSIDL 相关）
+- `init_queue()`：初始化种子队列
+- `init_px4_bridge()`：初始化 PX4 通道桥
+- `init_state_monitor(watchlist_file)`：启动独立状态监控（当前主链路更多依赖 rosbag）
+- `run_target(ros_pkg, ros_node, exec_cmd)`：启动目标
+- `kill_target()`：停止目标
+- `kill_monitor()`：停止监控
+- `destroy()`：统一资源清理
+
+### 4.3 CLI 参数（核心）
+- 通用：`--method --schedule --seqlen --repeat --interval --maxloop --logdir --watchlist --fuzz-seed --determ-seed --persistent --no-cov`
+- 目标选择：`--ros-pkg --ros-node --target-node --exec-cmd`
+- PX4：`--px4-sitl-ros --px4-sitl-mav --px4-sitl-pgfuzz --px4-flight-mode --px4-mission`
+- TB3：`--tb3-sitl --tb3-hitl --tb3-uri`
+- SROS2：`--sros2`
+- Nav2：`--nav2-amcl`
+- RCL：`--test-rcl --rcl-api --rcl-job`
+- CLI 一致性：`--test-cli`
+- ROSIDL：`--test-rosidl`
+- MoveIt：`--test-moveit`
+
+## 5. 核心模块接口清单
+
+### 5.1 `src/config.py`
+- `TestMode(Enum)`：模式枚举
+- `RuntimeConfig`：运行态配置对象
+  - `find_package_metadata()`：通过 `ros2 pkg prefix` 推导包路径、可执行路径、覆盖率路径
+
+### 5.2 `src/scheduler.py`
+- `Campaign(Enum)`：`RND_SINGLE/RND_SEQUENCE/RND_REPEATED/IDL_CHECK/...`
+- `Scheduler`：
+  - `filter_field_list(whitelist, blacklist)`
+  - `init_schedule()`
+  - `mutate_generic(config)`
+  - `mutate_sequence(config)`
+  - `mutate_sequence_mav(config)`
+  - `mutate_typemsg(config)`（ROSIDL）
+  - `mutate_px4_param(config)`（PGFuzz 风格参数变异）
+  - `mutate_moveit_goal(config)` / `mutate_moveit_joint(config)`
+
+### 5.3 `src/mutator.py`
+- 随机值与边界：`gen_rand_data/get_rand_val/get_bounds/get_default_val`
+- 类型空间变异：`mutate_type/random_builtin_type_except/get_primary_type`
+- 数值生成：`gen_int_in_range/gen_float_in_range/gen_special_floats`
+- 位级工具：`int*_to_bitstr/float*_to_bitstr/str_to_bitstr/bitlist_to_binary`
+- 主变异：`mutate_one(dtype, value, stage, pos, arith_val, interesting_idx)`
+- 关键常量：`APPLICABLE_STAGES`、`INTERESTING_MAP`、`STAGE_*`
+
+### 5.4 `src/executor.py`
+- `ExecMode(Enum)`：`SINGLE/SEQUENCE`
+- `Executor`：
+  - `prep_execution(msg_type_class, topic_name)`
+  - `execute(...)`
+  - `start_rosbag(exec_cnt)` / `kill_rosbag()`
+  - `start_watching()` / `stop_watching()`（写入 `/tmp/start_ts` 与 `/tmp/end_ts`）
+  - `do_ros2_pub(msg)`（默认发布实现）
+  - `save_msg_to_queue(msg, frame, subframe)`
+
+### 5.5 `src/checker.py`
+- `run_checks(config, msg_list, state_dict, feedback_list)`：oracle 分发
+- `run_rpt_checks(config, state_dict_list)`：重复执行一致性检查
+- `APIChecker`：解析 `ltrace` 输出并比对跨语言 API 行为
+- `CollisionChecker`：监听 Gazebo 接触事件（PX4）
+
+### 5.6 `src/ros_utils.py`
+- ROS 接口枚举：`get_all_message_types/get_all_service_types`
+- 图查询：`get_publishers/get_subscriptions/get_secure_subscriptions/get_services`
+- 类型加载：`get_msg_class_from_name/get_msg_typename_from_class`
+- 结构展开：`flatten_nested_dict`
+
+### 5.7 `src/rosbag_parser.py`
+- `RosbagParser(db_file)`
+- `process_messages()`：按 start/end 时间窗过滤
+- `process_all_messages()`：读取所有消息
+
+### 5.8 `src/feedback.py`
+- `FeedbackType(Enum)`：`INC/DEC/ZERO/TARGET`
+- `Feedback`：`update_value/is_interesting/reset/...`
+
+## 6. Oracle 模块说明
+
+所有 oracle 统一接口：
+- `check(config, msg_list, state_dict_or_pose_list, feedback_list) -> list[str]`
+
+具体文件：
+- `oracles/turtlesim.py`：边界、NaN/INF 检查
+- `oracles/turtlebot.py`：IMU/Odom/Scan 约束与跨传感器一致性（含 `theta_diff` 反馈）
+- `oracles/px4.py`：飞行模式参数约束、传感器一致性、hold 模式位移检测
+- `oracles/moveit.py`：关节限位、动作状态、末端位姿偏差、IK 可达性
+- `oracles/rosidl.py`：输入/回放消息一致性
+- `oracles/nav2_amcl.py`：姿态合法性、协方差、跳变、TF map->odom、诊断级别
+
+## 7. 与目标系统相关的桥接/辅助模块
+
+- `px4_utils.py`
+  - `Parameter`（参数变异消息类）
+  - `Px4BridgeNode`（ROS/MAVLink 双通道控制）
+  - `get_init_trajectory_msg/get_init_manual_control_msg/get_init_parameter_msg`
+  - `read_trajectory_seed/read_offboard_mission/conduct_offboard_mission`
+- `harness.py`
+  - `run_px4_stack_sh/run_tb3_sitl/run_tb3_hitl/run_moveit_harness/run_rcl_api_harness/...`
+- `rcl_harness.py`、`cli_harness.py`
+  - 接收 fuzzer 发布指令，驱动目标程序并产出 `out-*`、`trace-*`
+
+## 8. 日志与产物约定
+
+每次运行会创建 `logs/<timestamp>/`，并维护 `logs/latest` 软链接。
+
+关键子目录：
+- `queue/`：发送消息样本（pickle）
+- `metadata/`：每轮元信息（目标节点/话题/类型/cycle/round）
+- `errors/`：oracle 报错
+- `cov/`：反馈值落盘
+- `rosbags/`：错误用例对应的 rosbag
+- `cmd` / `args`：运行命令与参数快照
+
+## 9. 如何接入新的 fuzz 项目（重点）
+
+下面流程是“最稳妥、最少踩坑”的接入顺序。
+
+### 第 1 步：定义测试边界与正确性语义
+
+先明确：
+- 你要 fuzz 的输入接口是什么（topic/service/action）
+- 目标系统是否需要特殊启动顺序/预热动作
+- 需要监控哪些状态 topic 才能判断正确性
+- 错误定义（物理约束、协议约束、业务语义）
+
+### 第 2 步：新增 watchlist
+
+在 `src/watchlist/` 新建 `your_target.json`，格式：
+
+```json
+{
+  "/topic_a": "pkg/msg/TypeA",
+  "/topic_b": "pkg/msg/TypeB"
+}
 ```
-$ docker pull ghcr.io/sslab-gatech/robofuzz:latest
-$ docker tag ghcr.io/sslab-gatech/robofuzz:latest robofuzz
+
+建议：
+- 只放判定必需 topic，避免 rosbag 膨胀
+- 包含关键输入回显/状态闭环 topic
+
+### 第 3 步：实现新 oracle
+
+在 `src/oracles/` 新建 `your_target.py`：
+
+```python
+def check(config, msg_list, state_dict, feedback_list):
+    errs = []
+    # 1) 取关心 topic
+    # 2) 做 NaN/INF + 边界 + 语义检查
+    # 3) 可选更新 feedback_list
+    return errs
 ```
-(Due to the pre-compiled target robotic systems, the size of the image is
- approximately 20 GB, so docker pull might take a while.)
 
-The docker image includes the code of RoboFuzz, along with the pre-compiled
-packages of the six targets and all the tools required for experiments:
-* `/robofuzz/src/`: Source code of RoboFuzz
-  * `/robofuzz/src/fuzzer.py`: Main module of RoboFuzz
-  * `/robofuzz/src/oracles/*`: Correctness oracles for target systems
-  * `/robofuzz/src/watchlist/*`: Topics to monitor
-* `/robofuzz/targets`: Pre-compiled test targets
-* `/robofuzz/ros2_foxy`: ROS2 foxy installation (instrumented ver.)
-* `/opt/ros/foxy`: ROS2 foxy installation (package manager ver.)
+接入点：修改 `src/checker.py` 的 `run_checks` 分发逻辑，增加分支。
 
+### 第 4 步：接入目标启动/停止 harness
 
-## Running RoboFuzz and reproducing our results
+若默认 `ros2 run` 不能覆盖你的目标启动链路：
+- 在 `src/harness.py` 新增 `run_xxx_harness()`
+- 在 `src/fuzzer.py` 的 `run_target()` / `kill_target()` 中注册分支
 
-RoboFuzz needs to be run separately for each target system.
+若需要发布前准备/发布后清理：
+- 在 `fuzz_msg()` 中为该目标配置 `pre_exec_list` / `post_exec_list`
 
-### 0. Understanding the output of RoboFuzz
+### 第 5 步：限制可变异字段（强烈建议）
 
-RoboFuzz creates an output directory to log all runtime information and
-metadata. Unless the path is explicitly specified through `--logdir LOGDIR`,
-you can find the logs under `/robofuzz/src/logs/timestamp` in the container.
-In addition, `/robofuzz/src/logs/latest` always points (i.e., symlinks) to the
-latest log directory.
+在 `fuzz_msg()` 的目标分支里设置 `field_whitelist`，减少无效搜索空间，例如：
 
-* Glossary
-  * Exec: One exec of fuzzing includes running the target system, publishing
-           a mutated message, checking for errors, and terminating the target.
-  * Round: A round of fuzzing consists of multiple executions under a specific
-           mutation schedule. Check `/robofuzz/src/scheduler.py` for details.
-  * Cycle: A cycle is a collection of several rounds. The number of rounds in
-           a cycle is configurable. In general, RoboFuzz keeps mutating one
-           message during one cycle, and moves on to the next message in the
-           queue when the new cycle begins.
-  * Frame: The timestamp taken at the beginning of a round.
-  * Subframe: The timestamp taken when each message is published. For example,
-              if an execution begins at `ts-0`, it is the frame. If, during
-              the execution, RoboFuzz publishes a sequence of three messages
-              at `ts-1`, `ts-2`, and, `ts-3` respectively, each timestamp is
-              the subframe of the corresponding message. Using the combination
-              of the frame and subframe, any message can be located.
+```python
+field_whitelist = [
+    ["linear", "x", np.dtype("float64")],
+    ["angular", "z", np.dtype("float64")],
+]
+```
 
-* Each log directory has several sub-directories:
-  * `metadata/`: contains node, topic, data type, cycle and round count of
-                 each execution.
-    * Filename format: `meta-{Frame}`
-  * `errors/`: Error messages emitted by oracles when bugs are triggered.
-    * Filename format: `error-{Frame}`.
-  * `cov/`: Feedback elements and their values when they are considered
-            interesting.
-    * Filename format: `{Frame}`.
-  * `queue/`: Messages generated/mutated during fuzzing. If multiple messages
-              were published during one execution, e.g., with `SEQUENCE`
-              schedule, they can be retrieved by `ls queue | grep {Frame}`.
-    * Filename format: `msg-{Frame}-{Subframe}`.
-  * `rosbags/`: Rosbag files (i.e., dump of all messages and states) of buggy
-                test cases. These are standard rosbags of ROS 2, and for
-                detailed usage, please refer to the [official tutorial](https://docs.ros.org/en/foxy/Tutorials/Beginner-CLI-Tools/Recording-And-Playing-Back-Data/Recording-And-Playing-Back-Data.html).
-    * Filename format: `{Frame}/states-{exec}.bag`
+否则默认会对所有可达字段展开，效率和稳定性通常较差。
 
-During or after the fuzzing campaign, you can refer to the contents of the log
-directory to make sense of the fuzzing progress and detected bugs.
+### 第 6 步：必要时补充消息预处理
 
-### 1. Testing ROSIDL
+如 Nav2 `LaserScan/OccupancyGrid` 这类消息对长度、帧、范围敏感，可参考：
+- `fuzzer.py::nav2_amcl_adjust_msg`
 
-1. Start RoboFuzz container (HOST)
-    ```
-    $ xhost +
-    $ docker run --rm -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix --name robofuzz robofuzz
-    root@container_id:/robofuzz/src#
-    ```
+对新目标也可做类似“发布前修正”，避免大量无意义 publish 失败。
 
-2. Run RoboFuzz (CONTAINER)
-    ```
-    root@container_id:/robofuzz/src# ./fuzzer.py --test-rosidl --no-cov --watchlist watchlist/idltest.json
-    ```
+### 第 7 步：制定最小可复现命令
 
-The fuzzer will cycle through various ROS types and test the correctness of
-the type system implementation.
+新增目标后，至少固定一条 smoke 命令，写进文档：
 
-### 2. Testing RCL API consistency
+```bash
+./fuzzer.py \
+  --no-cov \
+  --ros-pkg <pkg> --ros-node <node> \
+  --watchlist watchlist/your_target.json \
+  --method message --schedule single --interval 0.1 --maxloop 100
+```
 
-1. Start RoboFuzz container (HOST)
-    ```
-    $ xhost +
-    $ docker run --rm -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix --name robofuzz robofuzz
-    root@container_id:/robofuzz/src#
-    ```
+### 第 8 步：验证接入质量（检查清单）
 
-2. Run RoboFuzz (CONTAINER)
-    Please note that each of the following substep should be run separately
-    in a clean-slate RoboFuzz container.
+- 能发现目标 topic（`inspect_target` 输出正常）
+- 发布成功率高（`errors/error-*` 中 publish failed 占比低）
+- rosbag 有有效状态数据
+- oracle 能产生可解释错误
+- 反馈值会变化（若启用 feedback）
+- 错误样本可被复现（基于 `queue/` + `rosbags/`）
 
-    a. Testing RCL publisher APIs while creating a publisher
-      ```
-      root@container_id:/robofuzz/src# source /robofuzz/ros2_foxy/install/setup.bash
-      root@container_id:/robofuzz/src# ./fuzzer.py --test-rcl --rcl-api publisher --rcl-job create_publisher
-      ```
-    b. Testing RCL subscriber APIs while creating a subscriber
-      ```
-      root@container_id:/robofuzz/src# source /robofuzz/ros2_foxy/install/setup.bash
-      root@container_id:/robofuzz/src# ./fuzzer.py --test-rcl --rcl-api subscriber --rcl-job create_subscriber
-      ```
+## 10. 逐文件说明（全量）
 
-    c. Testing RCL node APIs while creating a node
-      ```
-      root@container_id:/robofuzz/src# source /robofuzz/ros2_foxy/install/setup.bash
-      root@container_id:/robofuzz/src# ./fuzzer.py --test-rcl --rcl-api node --rcl-job create_node
-      ```
+> 说明规则：按仓库当前文件逐个列出；自动生成/二进制产物也会注明用途。
 
-    d. Testing RCL + CLI API consistency while setting a parameter
-      ```
-      root@container_id:/robofuzz/src# source /robofuzz/ros2_foxy/install/setup.bash
-      root@container_id:/robofuzz/src# ./fuzzer.py --test-cli --no-cov
-      ```
+### 10.1 根目录
 
-### 3. Testing Turtlesim
+- `.gitignore`：忽略构建中间文件、日志、密钥等
+- `LICENSE`：MIT 许可证
+- `INSTALL.md`：Docker 安装与运行说明（英文）
+- `REQUIREMENTS.md`：硬件/软件环境要求（英文）
+- `README_legacy.md`：原版英文说明（论文与复现实验说明）
+- `hybrid_fuzzing.md`：混合仿真+实机（以 TB3 为例）的操作指南
+- `README.md`：本中文工程说明（新）
 
-1. Start RoboFuzz container (HOST)
-    ```
-    $ xhost +
-    $ docker run --rm -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix --name robofuzz robofuzz
-    root@container_id:/robofuzz/src#
-    ```
+### 10.2 `src/` 顶层代码文件
 
-2. Run RoboFuzz (CONTAINER)
-    ```
-    root@container_id:/robofuzz/src# ./fuzzer.py --no-cov --ros-pkg turtlesim --ros-node turtlesim_node --watchlist watchlist/turtlesim.json --method message --schedule single --interval 0.1
-    ```
+- `fuzzer.py`：主程序入口与总控编排
+- `scheduler.py`：变异策略调度器
+- `mutator.py`：类型与位级变异引擎
+- `executor.py`：执行发布/录包/样本落盘
+- `checker.py`：oracle 分发与一致性校验
+- `harness.py`：多目标启动桥接
+- `config.py`：运行时配置对象与包路径解析
+- `constants.py`：全局常量与类型枚举
+- `feedback.py`：反馈对象与有趣性判定
+- `ros_utils.py`：ROS 类型/图查询工具
+- `rosbag_parser.py`：rosbag2 sqlite 解析
+- `state_monitor.py`：独立状态监控节点（历史方案）
+- `inspector.py`：目标 topic/service 发现工具函数（与 `fuzzer.py` 中实现重叠）
+- `tracer.py`：ltrace 解析器
+- `rcl_harness.py`：RCL API 一致性 harness
+- `cli_harness.py`：CLI/API 一致性 harness
+- `px4_utils.py`：PX4 控制与参数变异核心工具
+- `px4_ros_bridge.py`：早期 PX4 ROS 桥接测试脚本
+- `ros_to_mav.py`：MAVLink 手工控制脚本
+- `idltest_replayer.py`：ROSIDL 样本回放工具
+- `reproduce_mav.py`：PX4/MAV 重放与复现实验脚本
+- `run_robofuzz.sh`：docker 启动封装
+- `run_nav2_fuzz_in_container.sh`：Nav2 AMCL 场景一键执行脚本
+- `nav2prep.sh`：Nav2 依赖安装脚本（国内镜像）
+- `nav2_env_prep.sh`：Nav2 环境准备（apt/source 两路线）
+- `nav2build.sh`：Nav2 依赖与源码构建脚本（较重）
+- `qos_override.yaml`：rosbag 录制 QoS 覆写（特别是 `/map` 与 `listen_flag`）
+- `requirements.txt`：Python 依赖（`sysv-ipc`、`kinpy`）
+- `.dockerignore`：容器构建忽略项
+- `out` / `err`：临时输出文件占位（运行时被覆盖）
 
-### 4. Testing Move It 2 + PANDA manipulator
+### 10.3 `src/oracles/`
 
-1. Start RoboFuzz container (HOST)
-    ```
-    $ xhost +
-    $ docker run --rm -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix --name robofuzz robofuzz
-    root@container_id:/robofuzz/src#
-    ```
+- `turtlesim.py`：Turtlesim 状态合法性
+- `turtlebot.py`：TB3 传感器/运动约束与一致性
+- `px4.py`：PX4 飞行约束与一致性
+- `moveit.py`：MoveIt2/Panda 运动学与控制语义检查
+- `rosidl.py`：ROSIDL 回放一致性
+- `nav2_amcl.py`：Nav2 AMCL 稳定性与 TF 语义检查
 
-2. Run RoboFuzz (CONTAINER)
-    ```
-    root@container_id:/robofuzz/src# ./fuzzer.py --test-moveit --watchlist watchlist/moveit2.json --no-cov
-    ```
+### 10.4 `src/watchlist/`
 
-Please note that we set a small margin in the joint limit checker oracle to
-prevent an [existing specification violation](https://github.com/ros-planning/moveit_resources/issues/116)
-that we found from being constantly reported and overshadowing other bugs.
-To reproduce this bug, please open `/robofuzz/src/oracle/moveit.py` and
-override `MARGIN` to `0.0` (see comments at the beginning of the file.)
+- `empty.json`：空监控模板
+- `turtlesim.json`：Turtlesim 监控 topic
+- `turtlebot3.json`：TB3 监控 topic
+- `moveit2.json`：MoveIt2 监控 topic
+- `px4.json`：PX4 监控 topic
+- `idltest.json`：ROSIDL 大量输出 topic 列表
+- `nav2_amcl.json`：Nav2 AMCL 监控 topic
 
-### 5. Testing TurtleBot3 Burger
+### 10.5 `src/ros2_fuzzer/`（第三方/历史模块）
 
-1. Start RoboFuzz container (HOST)
-    ```
-    $ xhost +
-    $ docker run --rm -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix --name robofuzz robofuzz
-    root@container_id:/robofuzz/src#
-    ```
+- `ros_commons.py`：ROS 类型映射与动态加载工具
+- `ros_basic_strategies.py`：Hypothesis 策略（string/time/duration/array）
+- `ros_fuzzer.py`：基于 Hypothesis 的独立 fuzz CLI
+- `process_handling.py`：被测节点存活探测
+- `test.py`：示例测试
+- `__init__.py`：包标记
 
-2. Run RoboFuzz (CONTAINER)
-    ```
-    root@container_id:/robofuzz/src# ./fuzzer.py --tb3-sitl --no-cov --method message --schedule single --repeat 1 --interval 5.0 --watchlist watchlist/turtlebot3.json
-    ```
+### 10.6 `src/coverage/` 与 `src/cov/`
 
-Like the case of PANDA manipulator, there is an [existing specification violation error](https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/178)
-in the LiDAR processor node, and this bug is triggered all the time regardless
-of the input messages, i.e., `scan.range inf is out of range`. To suppress the
-bug, please comment out lines 242-259 in `/robofuzz/src/oracle/turtlebot.py`
-and re-run the fuzzer.
+- `coverage/coverage_tool.py`：gcov 报告解析与覆盖率统计
+- `coverage/__init__.py`：空
+- `coverage/.gitignore`：忽略 `*.gcov`
+- `cov/cov-trace.o.c`：sanitizer coverage + shm 写入 hook
+- `cov/cov-fs.o.c`：coverage 追踪写文件 hook
+- `cov/Makefile`：构建 hook 对象与示例构建命令
+- `cov/.gitignore`：忽略 `*.o`
 
-### 6. Testing PX4 quadcopter
+### 10.7 `src/policies/`（SROS2）
 
-1. Start RoboFuzz container (HOST, terminal 1)
-    ```
-    $ xhost +
-    $ docker run --rm -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix --name robofuzz robofuzz
-    root@container_id:/robofuzz/src#
-    ```
+- `fuzzer.policy.xml`：fuzzer 策略总入口
+- `sros2_node.policy.xml`：sros2 节点策略
+- `common/node.xml`：公共 node 策略聚合
+- `common/lifecycle_node.xml`：lifecycle node 扩展策略
+- `common/node/logging.xml`：`/rosout` 权限
+- `common/node/time.xml`：`/clock` 权限
+- `common/node/parameters.xml`：参数 topic/service 权限
 
-2. On another terminal, attach to the running container and run
-   `micrortps_agent` (HOST->CONTAINER, terminal 2)
-    ```
-    $ docker exec -ti robofuzz /bin/bash
-    root@container_id:/robofuzz/src# source /ros_entrypoint.sh
-    root@container_id:/robofuzz/src# micrortps_agent -t UDP
-    ```
+### 10.8 `src/librcl_apis/`
 
-3. Back on the first terminal, run RoboFuzz (CONTAINER, terminal 1)
-    Please note that each of the following substep should be run separately
-    in a clean-slate RoboFuzz container (meaning that steps 1 and 2 must be
-    preceded).
+- `publisher.txt/subscriber.txt/service.txt/client.txt/node.txt/timer.txt/graph.txt/guard_condition.txt/init.txt/time.txt/wait.txt/expand_topic_name.txt/validate_topic_name.txt`
+  - 每文件列出一个 RCL API 族，供 `rcl_harness.py` 生成 `ltrace -x ...` 过滤器
+- `format.py`：把 API 名单格式化成 `-x func@librcl.so` 的辅助脚本
 
-    a. Testing the offboard mode (via ROS trajectory setpoint)
-    ```
-    root@container_id:/robofuzz/src# ./fuzzer.py --px4-sitl-ros --method message --schedule sequence --repeat 1 --watchlist watchlist/px4.json --interval 0.02
-    ```
+### 10.9 `src/px4_prep/`
 
-    b. Testing via remote control commands (MAVLink)
-    ```
-    root@container_id:/robofuzz/src# ./fuzzer.py --px4-sitl-mav --method message --schedule sequence --seqlen 100 --repeat 1 --watchlist watchlist/px4.json --interval 0.1 --px4-flight-mode POSCTL
-    ```
+- `parameter_reference.md`：PX4 参数文档（体积大）
+- `params.txt`：参数列表原始数据
+- `params.pkl`：预处理后的参数元数据（被 `px4_utils.py` 直接读取）
+- `preprocess_params.py`：从文档提取参数范围/默认值
+- `blacklist.py`：参数黑名单与已测参数名单
 
-    You can test PX4 under different flight modes by switching the last
-    parameter, i.e., `--px4-flight-mode POSCTL`. Please check the usage from
-    `./fuzzer.py --help`.
+### 10.10 `src/missions/`
 
-    c. Testing by mutating parameter values (similar to PGFuzz)
-    ```
-    root@container_id:/robofuzz/src# ./fuzzer.py --px4-sitl-pgfuzz --method message --schedule single --repeat 1 --watchlist watchlist/px4.json --interval 15
-    ```
+- `mission_generator.py`：生成 PX4 mission JSON（示例）
+- `mission_generator2.py`：生成推力相关 mission
+- `mission_generator3.py`：生成 pushdown mission
+- `takeoff*.json/church*.json/test.json`：当前仓库为空文件占位（需按场景补充）
 
+### 10.11 `src/utils/`
 
-## Reports and PoCs of the bugs RoboFuzz detected
+- `nav2_amcl_feeder.py`：发布假激光与静态 TF，驱动 AMCL
+- `replay.py`：历史回放工具（message/service）
+- `create_msg.py`：构造 pickle 消息样本
+- `msg_viewer.py`：查看 pickle 消息
+- `ros-radamsa.sh`：基于 radamsa 的字符串 topic 变异脚本
+- `sros_init.sh`：SROS2 keystore/权限初始化
+- `speaker.py`：循环向 sros2 topic 发消息
+- `clear_shm.sh`：清理共享内存
+- `set_focus.sh/reset_focus.sh`：桌面窗口焦点策略辅助脚本
 
-Bug numbers (# columnn) in each table are in sync with Table 2 of the [paper](./paper.pdf).
+### 10.12 `src/tests/`
 
-### 1. PX4 bugs
+- `test_flips_bool.py/test_flips_byte.py/test_flips_int.py/test_flips_float.py`
+  - 验证 bit flip 系列变异行为
+- `test_arith_int.py/test_arith_float.py`
+  - 验证 arithmetic 变异行为
+- `test_unicode.py`
+  - 验证 Unicode 生成
+- `test_kinematics.py`
+  - MoveIt/Panda 运动学验证脚本
+- `test_tracer.py`
+  - `APITracer` 解析验证
 
-| # | Fuzzing mode        | Short description                                                                 | Report/PoC                                                                |
-|---|---------------------|-----------------------------------------------------------------------------------|---------------------------------------------------------------------------|
-| 1 | `--px4-sitl-ros`    | `MPC_ACC_HOR_MAX` parameter violation                                             | https://github.com/PX4/PX4-Autopilot/issues/18033                         |
-| 2 | `--px4-sitl-ros`    | Controller violates feed-forward setpoint specification                           | https://github.com/PX4/PX4-user_guide/issues/1458                         |
-| 3 | `--px4-sitl-ros`    | Doc-implementation mismatch of trajectory setpoint message definition             | https://github.com/PX4/PX4-Autopilot/issues/18855#issuecomment-994922384  |
-| 4 | `--px4-sitl-ros`    | Incorrect definitions of applicable parameters in offboard mode                   | https://github.com/PX4/PX4-Autopilot/issues/18855#issuecomment-1008432087 |
-| 5 | `--px4-sitl-mav`    | Doc-implementation mismatch of `MPC_POS_MODE` parameter                           | https://github.com/PX4/PX4-Autopilot/issues/19101#issuecomment-1034174009 |
-| 6 | `--px4-sitl-mav`    | Doc-implementation mismatch of `MPC_ACC_HOR` and `MPC_ACC_HOR_MAX` parameters     | https://github.com/PX4/PX4-Autopilot/issues/19101#issuecomment-1050916449 |
-| 7 | `--px4-sitl-mav`    | Doc-implementation mismatch of `MPC_ACC_UP_MAX` and `MPC_ACC_DOWN_MAX` parameters | https://github.com/PX4/PX4-Autopilot/issues/19101#issuecomment-1034174009 |
-| 8 | `--px4-sitl-pgfuzz` | Drone moves in horizontal direction in the Takeoff mode (spec violation)          | https://github.com/PX4/PX4-Autopilot/issues/19268                         |
+### 10.13 其他目录与文件
 
-### 2. TurtleBot3 bugs
+- `src/states-0.bag/`：示例 rosbag2 数据库文件（`*.db3`, `-shm`, `-wal`）
+- `src/logs/`：运行日志目录（运行时生成）
 
-| #  | Fuzzing mode                  | Short description                                             | Report/PoC                                                                  |
-|----|-------------------------------|---------------------------------------------------------------|-----------------------------------------------------------------------------|
-| 9  | `--tb3-sitl`                  | Doc-implementation mismatch of maximum velocity               | https://github.com/ROBOTIS-GIT/turtlebot3/issues/765                        |
-| 10 | `--tb3-sitl`                  | Constraining logic fails to clamp velocity to the valid range | https://github.com/ROBOTIS-GIT/turtlebot3/issues/765#issuecomment-891092104 |
-| 11 | `--tb3-hitl` and `--tb3-sitl` | Phy-sim discrepancy of maximum achievable torque              | https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/170            |
-| 12 | `--tb3-hitl` and `--tb3-sitl` | Phy-sim discrepancy of maximum achievable velocity            | https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/170            |
-| 13 | `--tb3-hitl` and `--tb3-sitl` | Phy-sim discrepancy in handling LiDAR scan data               | https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/178            |
+## 11. 当前代码状态与后续改进建议
 
-### 3. Move It 2 + PANDA manipulator bugs
+结合代码现状，后续改进可优先做：
 
-| #  | Fuzzing mode    | Short description                                  | Report/PoC                                                   |
-|----|-----------------|----------------------------------------------------|--------------------------------------------------------------|
-| 14 | `--test-moveit` | Doc-implementation mismatch of joint limits        | https://github.com/ros-planning/moveit_resources/issues/116  |
-| 15 | `--test-moveit` | Velocities are zero when the manipulator is moving | https://github.com/ros-planning/moveit2_tutorials/issues/333 |
+1. 结构解耦
+- `fuzzer.py` 体量过大（>1800 行），建议拆分：参数解析/目标发现/主循环/模式插件
 
-### 4. Turtlesim bugs
+2. 统一目标插件化
+- 把 PX4/TB3/MoveIt/Nav2 的分支逻辑抽象为目标插件接口：
+  - `prepare_target()`
+  - `build_field_whitelist()`
+  - `build_feedbacks()`
+  - `pre_exec_hooks()/post_exec_hooks()`
+  - `oracle_check()`
 
-| #  | Fuzzing mode                                    | Short description                                | Report/PoC                                      |
-|----|-------------------------------------------------|--------------------------------------------------|-------------------------------------------------|
-| 16 | `--ros-pkg turtlesim --ros-node turtlesim_node` | Type confusion while normalizing an angle        | https://github.com/ros/ros_tutorials/issues/128 |
-| 17 | `--ros-pkg turtlesim --ros-node turtlesim_node` | Missing validation of NaN/INF in input variables | https://github.com/ros/ros_tutorials/issues/129 |
+3. 异常与资源回收一致性
+- 部分路径 `kill_target/kill_rosbag` 仍依赖外部状态；建议上下文管理器化
 
-### 5. ROSIDL bugs
+4. 样本格式统一
+- 当前 queue 用 pickle，跨版本可移植性差；建议补充 JSON 序列化层
 
-| #  | Fuzzing mode    | Short description                                                                     | Report/PoC                                          |
-|----|-----------------|---------------------------------------------------------------------------------------|-----------------------------------------------------|
-| 18 | `--test-rosidl` | All floats are treated as doubles due to missing boundary checks                      | https://github.com/ros2/rosidl_python/pull/128      |
-| 19 | `--test-rosidl` | Message setter does not handle byte correctly, treating them as string literals       | https://github.com/ros2/rosidl_runtime_py/issues/14 |
-| 20 | `--test-rosidl` | Missing data range checks for int arrays                                              | https://github.com/ros2/rosidl_python/issues/153    |
-| 21 | `--test-rosidl` | Missing data range checks for float arrays                                            | https://github.com/ros2/rosidl_python/issues/153    |
-| 22 | `--test-rosidl` | Implicit type casting of array elements alters data without notifying                 | https://github.com/ros2/rosidl_python/issues/153    |
-| 23 | `--test-rosidl` | Missing type checks for bool array elements, allowing data of any type to be stored   | https://github.com/ros2/rosidl_python/issues/153    |
-| 24 | `--test-rosidl` | Missing type checks for byte array elements, allowing data of any type to be stored   | https://github.com/ros2/rosidl_python/issues/153    |
-| 25 | `--test-rosidl` | Missing type checks for string array elements, allowing data of any type to be stored | https://github.com/ros2/rosidl_python/issues/153    |
+5. 测试体系
+- 现有 `src/tests` 偏脚本验证，建议引入 pytest + CI smoke 场景
 
-### 6. RCL API bugs
+6. 文档同步
+- `README_legacy.md` 与当前 Nav2 分支能力已有偏差；应以本 README 为主并持续同步
 
-| #  | Fuzzing mode                                                | Short description                                                                          | Report/PoC                                 |
-|----|-------------------------------------------------------------|--------------------------------------------------------------------------------------------|--------------------------------------------|
-| 26 | `--test-cli`                                                | `_on_parameter_events` always returns True, regardless of the result                       | https://github.com/ros2/rclpy/pull/817     |
-| 27 | `--test-rcl --rcl-api publisher --rcl-job create_publisher` | Missing sanity checks for rmw handle in `rclpy_create_publisher`                           | https://github.com/ros2/rclpy/issues/826   |
-| 28 | `--test-cli`                                                | `rclcpp` internally throws an exception that cannot be caught                              | https://github.com/ros2/rclcpp/issues/1581 |
-| 29 | `--test-rcl --rcl-api node --rcl-job create_node`           | Node param event checks rely on subscription, violates design principle of param callbacks | https://github.com/ros2/rclcpp/issues/1758 |
-| 30 | `--test-rcl --rcl-api node --rcl-job create_node`           | Error checking code is unreachable                                                         | https://github.com/ros2/rclcpp/issues/1758 |
+## 12. 常用命令参考
+
+### 通用 ROS 目标
+
+```bash
+cd src
+python3 fuzzer.py \
+  --no-cov \
+  --ros-pkg turtlesim --ros-node turtlesim_node \
+  --watchlist watchlist/turtlesim.json \
+  --method message --schedule single --interval 0.1
+```
+
+### Nav2 AMCL
+
+```bash
+cd src
+./run_nav2_fuzz_in_container.sh
+```
+
+### PX4（MAVLink）
+
+```bash
+cd src
+python3 fuzzer.py \
+  --px4-sitl-mav --method message --schedule sequence \
+  --seqlen 100 --repeat 1 --watchlist watchlist/px4.json \
+  --interval 0.1 --px4-flight-mode POSCTL
+```
+
+---
+
+如果你希望，我可以在下一步继续做两件事：
+1) 把“新增 fuzz 项目接入”落成一个可直接复制的模板目录（`target_template/` + `oracle_template.py` + `watchlist_template.json`）。
+2) 按当前代码再生成一份“接口速查表”（函数签名 + 调用关系图），用于后续重构分工。
+
+## 附录 A：仓库文件全路径索引（逐文件）
+
+> 说明：以下索引覆盖 `rg --files` 的全部文件；每个文件的功能解释见第 10 章对应小节。
+
+- `INSTALL.md`
+- `LICENSE`
+- `README.md`
+- `README_legacy.md`
+- `REQUIREMENTS.md`
+- `hybrid_fuzzing.md`
+- `src/checker.py`
+- `src/cli_harness.py`
+- `src/config.py`
+- `src/constants.py`
+- `src/cov/Makefile`
+- `src/cov/cov-fs.o.c`
+- `src/cov/cov-trace.o.c`
+- `src/coverage/__init__.py`
+- `src/coverage/coverage_tool.py`
+- `src/err`
+- `src/executor.py`
+- `src/feedback.py`
+- `src/fuzzer.py`
+- `src/harness.py`
+- `src/idltest_replayer.py`
+- `src/inspector.py`
+- `src/librcl_apis/client.txt`
+- `src/librcl_apis/expand_topic_name.txt`
+- `src/librcl_apis/format.py`
+- `src/librcl_apis/graph.txt`
+- `src/librcl_apis/guard_condition.txt`
+- `src/librcl_apis/init.txt`
+- `src/librcl_apis/node.txt`
+- `src/librcl_apis/publisher.txt`
+- `src/librcl_apis/service.txt`
+- `src/librcl_apis/subscriber.txt`
+- `src/librcl_apis/time.txt`
+- `src/librcl_apis/timer.txt`
+- `src/librcl_apis/validate_topic_name.txt`
+- `src/librcl_apis/wait.txt`
+- `src/missions/church-fail.json`
+- `src/missions/church-short.json`
+- `src/missions/church.json`
+- `src/missions/mission_generator.py`
+- `src/missions/mission_generator2.py`
+- `src/missions/mission_generator3.py`
+- `src/missions/takeoff-push.json`
+- `src/missions/takeoff-pushdown.json`
+- `src/missions/takeoff-quick.json`
+- `src/missions/takeoff-quickland.json`
+- `src/missions/takeoff.json`
+- `src/missions/test.json`
+- `src/mutator.py`
+- `src/nav2_env_prep.sh`
+- `src/nav2build.sh`
+- `src/nav2prep.sh`
+- `src/oracles/moveit.py`
+- `src/oracles/nav2_amcl.py`
+- `src/oracles/px4.py`
+- `src/oracles/rosidl.py`
+- `src/oracles/turtlebot.py`
+- `src/oracles/turtlesim.py`
+- `src/out`
+- `src/policies/common/lifecycle_node.xml`
+- `src/policies/common/node.xml`
+- `src/policies/common/node/logging.xml`
+- `src/policies/common/node/parameters.xml`
+- `src/policies/common/node/time.xml`
+- `src/policies/fuzzer.policy.xml`
+- `src/policies/sros2_node.policy.xml`
+- `src/px4_prep/blacklist.py`
+- `src/px4_prep/parameter_reference.md`
+- `src/px4_prep/params.pkl`
+- `src/px4_prep/params.txt`
+- `src/px4_prep/preprocess_params.py`
+- `src/px4_ros_bridge.py`
+- `src/px4_utils.py`
+- `src/qos_override.yaml`
+- `src/rcl_harness.py`
+- `src/reproduce_mav.py`
+- `src/requirements.txt`
+- `src/ros2_fuzzer/__init__.py`
+- `src/ros2_fuzzer/process_handling.py`
+- `src/ros2_fuzzer/ros_basic_strategies.py`
+- `src/ros2_fuzzer/ros_commons.py`
+- `src/ros2_fuzzer/ros_fuzzer.py`
+- `src/ros2_fuzzer/test.py`
+- `src/ros_to_mav.py`
+- `src/ros_utils.py`
+- `src/rosbag_parser.py`
+- `src/run_nav2_fuzz_in_container.sh`
+- `src/run_robofuzz.sh`
+- `src/scheduler.py`
+- `src/state_monitor.py`
+- `src/states-0.bag/states-0.bag_0.db3`
+- `src/states-0.bag/states-0.bag_0.db3-shm`
+- `src/states-0.bag/states-0.bag_0.db3-wal`
+- `src/tests/test_arith_float.py`
+- `src/tests/test_arith_int.py`
+- `src/tests/test_flips_bool.py`
+- `src/tests/test_flips_byte.py`
+- `src/tests/test_flips_float.py`
+- `src/tests/test_flips_int.py`
+- `src/tests/test_kinematics.py`
+- `src/tests/test_tracer.py`
+- `src/tests/test_unicode.py`
+- `src/tracer.py`
+- `src/utils/clear_shm.sh`
+- `src/utils/create_msg.py`
+- `src/utils/msg_viewer.py`
+- `src/utils/nav2_amcl_feeder.py`
+- `src/utils/replay.py`
+- `src/utils/reset_focus.sh`
+- `src/utils/ros-radamsa.sh`
+- `src/utils/set_focus.sh`
+- `src/utils/speaker.py`
+- `src/utils/sros_init.sh`
+- `src/watchlist/empty.json`
+- `src/watchlist/idltest.json`
+- `src/watchlist/moveit2.json`
+- `src/watchlist/nav2_amcl.json`
+- `src/watchlist/px4.json`
+- `src/watchlist/turtlebot3.json`
+- `src/watchlist/turtlesim.json`
