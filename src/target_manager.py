@@ -272,6 +272,7 @@ class TargetManager:
             start_cmd,
             shell=True,
             preexec_fn=os.setpgrp,
+            cwd=cfg["target_dir"],
             stdout=sp.PIPE,
             stderr=sp.PIPE,
         )

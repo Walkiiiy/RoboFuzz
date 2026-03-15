@@ -1,0 +1,38 @@
+{
+  "name": "robot_localization",
+  "basic": {
+    "ros_pkg": "robot_localization",
+    "ros_node": "ekf_node"
+  },
+  "lifecycle": {
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 pkg prefix robot_localization >/dev/null && ros2 pkg executables robot_localization | grep -Eq \"(^|[[:space:]])(ekf_node|ukf_node)$\"",
+    "skip_ros_pkg_check": false,
+    "start_cmd": "ros2 run robot_localization ekf_node --ros-args --params-file params/ekf.yaml",
+    "stop_cmd": "pkill -f 'robot_localization.*ekf_node' || true",
+    "warmup_sec": 2.0,
+    "exec_cmd": "true"
+  },
+  "fuzzing": {
+    "default_topic": "/imu/data",
+    "default_msg_type": "sensor_msgs/msg/Imu",
+    "field_whitelist": [
+      ["orientation", "x", "float64"],
+      ["orientation", "y", "float64"],
+      ["orientation", "z", "float64"],
+      ["orientation", "w", "float64"],
+      ["angular_velocity", "x", "float64"],
+      ["angular_velocity", "y", "float64"],
+      ["angular_velocity", "z", "float64"],
+      ["linear_acceleration", "x", "float64"],
+      ["linear_acceleration", "y", "float64"],
+      ["linear_acceleration", "z", "float64"],
+      ["header", "stamp", "sec", "uint32"],
+      ["header", "stamp", "nanosec", "uint32"]
+    ]
+  },
+  "monitoring": {
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
+  }
+}
