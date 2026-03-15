@@ -1,0 +1,25 @@
+{
+  "name": "px4_sitl_pgfuzz",
+  "basic": {
+    "ros_pkg": "px4",
+    "ros_node": "drone"
+  },
+  "lifecycle": {
+    "managed": false,
+    "warmup_sec": 10.0
+  },
+  "fuzzing": {
+    "default_topic": "/dummy_mavlink_topic",
+    "default_msg_type": "px4_msgs/msg/ManualControlSetpoint"
+  },
+  "monitoring": {
+    "watchlist": "../../watchlist/px4.json"
+  },
+  "runtime": {
+    "px4_sitl": true,
+    "px4_ros": false,
+    "use_mavlink": true,
+    "exp_pgfuzz": true,
+    "flight_mode": "LOITER"
+  }
+}

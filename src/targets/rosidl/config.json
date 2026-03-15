@@ -1,0 +1,22 @@
+{
+  "name": "rosidl",
+  "basic": {
+    "ros_pkg": "idltest_target",
+    "ros_node": "idltest_target"
+  },
+  "lifecycle": {
+    "managed": false,
+    "warmup_sec": 1.0
+  },
+  "fuzzing": {
+    "default_topic": "/metatopic",
+    "default_msg_type": "std_msgs/msg/Empty"
+  },
+  "monitoring": {
+    "watchlist": "../../watchlist/idltest.json"
+  },
+  "runtime": {
+    "test_rosidl": true,
+    "test_rosidl_lang": "py"
+  }
+}

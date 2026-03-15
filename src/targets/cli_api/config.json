@@ -1,0 +1,21 @@
+{
+  "name": "cli_api",
+  "basic": {
+    "ros_pkg": "cli_harness",
+    "ros_node": "cli_harness"
+  },
+  "lifecycle": {
+    "managed": false,
+    "warmup_sec": 2.0
+  },
+  "fuzzing": {
+    "default_topic": "cli_topic",
+    "default_msg_type": "std_msgs/msg/String"
+  },
+  "monitoring": {
+    "watchlist": "../../watchlist/empty.json"
+  },
+  "runtime": {
+    "test_cli": true
+  }
+}

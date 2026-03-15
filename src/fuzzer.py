@@ -38,6 +38,7 @@ from checker import StateMonitorNode
 from executor import Executor, ExecMode
 from scheduler import Scheduler, Campaign
 from feedback import Feedback, FeedbackType
+from target_manager import TargetManager
 
 import rclpy
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
@@ -63,6 +64,8 @@ class Fuzzer:
     def __init__(self, node_name, config):
         self.config = config
         self.node_name = node_name
+        self.target_manager = None
+        self.target_plugin = None
         self.node_ptr = rclpy.create_node(node_name)
         self.subs = []
         self.coverage_map = {}
@@ -73,6 +76,15 @@ class Fuzzer:
         self.client = None
         self.shm = None
         self.shm_data = None
+
+    def _is_managed_target(self):
+        if not (getattr(self.config, "target_name", None) and self.target_manager):
+            return False
+        tcfg = self.target_manager.get_target_config(self.config.target_name)
+        lifecycle = tcfg.get("lifecycle", {})
+        if "managed" in lifecycle:
+            return bool(lifecycle["managed"])
+        return bool(lifecycle.get("start_cmd") or lifecycle.get("exec_cmd"))
 
     def init_cov_map(self):
         print("[*] Initializing shm for coverage tracking")
@@ -138,6 +150,7 @@ class Fuzzer:
         self.queue = deque()
 
         if self.config.px4_sitl:
+            import px4_utils
             if self.config.fuzz_seed:
                 msg_list = px4_utils.read_trajectory_seed(self.config.fuzz_seed)
 
@@ -185,6 +198,7 @@ class Fuzzer:
     def init_px4_bridge(self):
         print("[*] Target: PX4 SITL")
         print("[*] Initializing PX4-ROS bridge")
+        import px4_utils
         self.px4_bridge = px4_utils.Px4BridgeNode(
             use_mavlink=self.config.use_mavlink
         )
@@ -206,6 +220,13 @@ class Fuzzer:
         )
 
     def run_target(self, ros_pkg, ros_node, exec_cmd):
+        if self._is_managed_target():
+            print(f"[*] Starting configured target: {self.config.target_name}")
+            self.ros_pgrp = self.target_manager.start_target(
+                self.config.target_name
+            )
+            self.running = True
+            return
 
         # os.system("ros2 daemon start")
 
@@ -345,6 +366,14 @@ class Fuzzer:
             print("[-] nothing to kill")
             return
 
+        if self._is_managed_target():
+            self.target_manager.stop_target(self.config.target_name)
+            self.running = False
+            if self.node_ptr is not None:
+                self.node_ptr.destroy_node()
+                self.node_ptr = None
+            return
+
         if self.config.px4_sitl:
             os.system("pkill px4")
             self.running = False
@@ -423,6 +452,24 @@ def inspect_target(fuzzer):
 
     built_in_msg_types = ros_utils.get_all_message_types()
     subscriptions = ros_utils.get_subscriptions(fuzzer.node_ptr)
+
+    if getattr(fuzzer.config, "target_name", None) and fuzzer.target_manager:
+        tcfg = fuzzer.target_manager.get_target_config(fuzzer.config.target_name)
+        fuzzing_cfg = tcfg.get("fuzzing", {})
+        topic_name = fuzzing_cfg.get("default_topic")
+        type_str = fuzzing_cfg.get("default_msg_type", "")
+        if topic_name and type_str:
+            parts = type_str.split("/")
+            if len(parts) >= 3:
+                msg_pkg = parts[0]
+                msg_name = parts[-1]
+                msg_type_class = ros_utils.get_msg_class_from_name(
+                    msg_pkg, msg_name
+                )
+                target_node = "/" + tcfg.get("basic", {}).get("ros_node", "")
+                if msg_type_class is not None:
+                    fuzz_targets.append([topic_name, msg_type_class, target_node])
+                    return fuzz_targets
 
     if fuzzer.config.px4_sitl:
         if fuzzer.config.use_mavlink:
@@ -631,6 +678,20 @@ def nav2_amcl_adjust_msg(fuzzer, msg):
 
 
 def fuzz_msg(fuzzer, fuzz_targets):
+    def normalize_whitelist(cfg_whitelist):
+        if cfg_whitelist is None:
+            return None
+
+        out = []
+        for field in cfg_whitelist:
+            if not field:
+                continue
+            prefix = list(field[:-1])
+            dtype_val = field[-1]
+            if isinstance(dtype_val, str):
+                dtype_val = np.dtype(dtype_val)
+            out.append(prefix + [dtype_val])
+        return out
 
     if len(fuzz_targets) == 0:
         print("[-] Could not discover ROS topic")
@@ -660,10 +721,29 @@ def fuzz_msg(fuzzer, fuzz_targets):
         field_whitelist = None
         fbk_list = list()
 
+        # Configuration by plugin/target config takes precedence.
+        if fuzzer.target_manager and getattr(fuzzer.config, "target_name", None):
+            msg_name = msg_type_class.__name__
+            cfg_whitelist = fuzzer.target_manager.get_field_whitelist(
+                fuzzer.config.target_name, msg_name
+            )
+            field_whitelist = normalize_whitelist(cfg_whitelist)
+
+            for fbk_def in fuzzer.target_manager.get_feedback_defs(
+                fuzzer.config.target_name
+            ):
+                fbk_type = FeedbackType[fbk_def["type"]]
+                fbk = Feedback(
+                    fbk_def["name"],
+                    fbk_type,
+                    fbk_def.get("default"),
+                )
+                fbk_list.append(fbk)
+
         # Per-target configuration
         # - whitelist and blacklist
         # - feedback attrs
-        if fuzzer.config.px4_sitl:
+        if field_whitelist is None and fuzzer.config.px4_sitl:
             # field_blacklist = ["acclelration", "jerk", "thrust"]
             if fuzzer.config.exp_pgfuzz:
                 field_whitelist = None
@@ -703,7 +783,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
             fbk = Feedback("gps_lon_inconsistency", FeedbackType.INC)
             fbk_list.append(fbk)
 
-        elif fuzzer.config.tb3_hitl:
+        elif field_whitelist is None and fuzzer.config.tb3_hitl:
             field_whitelist = [
                 ["linear", "x", np.dtype("float64")],
                 ["angular", "z", np.dtype("float64")],
@@ -712,7 +792,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
             fbk = Feedback("theta_diff", FeedbackType.INC)
             fbk_list.append(fbk)
 
-        elif fuzzer.config.tb3_sitl:
+        elif field_whitelist is None and fuzzer.config.tb3_sitl:
             field_whitelist = [
                 ["angular", "z", np.dtype("float64")],
                 ["linear", "x", np.dtype("float64")],
@@ -721,7 +801,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
             fbk = Feedback("theta_diff", FeedbackType.INC)
             fbk_list.append(fbk)
 
-        elif fuzzer.config.rospkg == "turtlesim":
+        elif field_whitelist is None and fuzzer.config.rospkg == "turtlesim":
             field_whitelist = [
                 ["linear", "x", np.dtype("float64")],
                 ["linear", "y", np.dtype("float64")],
@@ -729,7 +809,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
             ]
             # field_whitelist = None
 
-        elif fuzzer.config.nav2_amcl:
+        elif field_whitelist is None and fuzzer.config.nav2_amcl:
             msg_name = msg_type_class.__name__
             if msg_name == "LaserScan":
                 field_whitelist = [
@@ -768,7 +848,11 @@ def fuzz_msg(fuzzer, fuzz_targets):
                 print("[nav2_amcl] unsupported msg type:", msg_name)
                 continue
 
-        elif "turtlebot3_drive" in fuzzer.config.exec_cmd:
+        elif (
+            field_whitelist is None
+            and fuzzer.config.exec_cmd
+            and "turtlebot3_drive" in fuzzer.config.exec_cmd
+        ):
             field_whitelist = [
                 # ["pose", "pose", "orientation", "x", np.dtype("float64")],
                 # ["pose", "pose", "orientation", "y", np.dtype("float64")],
@@ -784,7 +868,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
             # - Control topic_name, msg_type_class, and subscriber_node
             pass
 
-        elif fuzzer.config.test_moveit:
+        elif field_whitelist is None and fuzzer.config.test_moveit:
             # when testing with commander harness
             field_whitelist = [
                 ["position", "x", np.dtype("float64")],
@@ -953,7 +1037,10 @@ def fuzz_msg(fuzzer, fuzz_targets):
             if msg_list is None:
                 continue
 
-            if fuzzer.config.nav2_amcl:
+            if fuzzer.target_plugin:
+                for i, msg in enumerate(msg_list):
+                    msg_list[i] = fuzzer.target_plugin.pre_exec_hook(msg)
+            elif fuzzer.config.nav2_amcl:
                 for i, msg in enumerate(msg_list):
                     msg_list[i] = nav2_amcl_adjust_msg(fuzzer, msg)
 
@@ -1130,8 +1217,14 @@ def fuzz_msg(fuzzer, fuzz_targets):
                 # state_monitor.rosbag_proc = None
 
                 # print("run checks")
-                errs = checker.run_checks(fuzzer.config, msg_list,
-                        state_msgs_dict, fbk_list)
+                if fuzzer.target_plugin:
+                    errs = fuzzer.target_plugin.check_oracle(
+                        fuzzer.config, msg_list, state_msgs_dict, fbk_list
+                    )
+                else:
+                    errs = checker.run_checks(
+                        fuzzer.config, msg_list, state_msgs_dict, fbk_list
+                    )
                 errs = list(set(errs))
                 # TODO: bring error logging and is_interesting here
 
@@ -1172,6 +1265,9 @@ def fuzz_msg(fuzzer, fuzz_targets):
                                     f"error-{frame}-trace-{i}",
                                 ),
                             )
+
+                if fuzzer.target_plugin:
+                    fuzzer.target_plugin.post_exec_hook()
 
             if errs:
                 err_file = os.path.join(
@@ -1292,6 +1388,12 @@ def main(config):
 
     rclpy.init(args=args)
     fuzzer = Fuzzer("_fuzzer", config)
+    if getattr(config, "target_name", None):
+        fuzzer.target_manager = TargetManager(config.proj_root, config)
+        fuzzer.target_plugin = fuzzer.target_manager.get_plugin(
+            config.target_name, config
+        )
+
     fuzzer.init_cov_map()
     fuzzer.init_queue()
 
@@ -1480,6 +1582,12 @@ if __name__ == "__main__":
         help="path to the file containing topic watchlist",
     )
     argparser.add_argument(
+        "--target",
+        default="",
+        type=str,
+        help="configured target name under <proj_root>/targets/<name>/config.json",
+    )
+    argparser.add_argument(
         "--determ-seed",
         type=int,
         help="seed value for deterministic execution",
@@ -1635,6 +1743,8 @@ if __name__ == "__main__":
     config.rosnode = args.ros_node
     config.watchlist = args.watchlist
     config.target_node = args.target_node
+    config.target_name = None
+    config.target_config = None
 
     if args.schedule == "single":
         config.schedule = Campaign.RND_SINGLE
@@ -1830,7 +1940,30 @@ if __name__ == "__main__":
         config.test_moveit = False
 
     config.exec_cmd = None
-    ret = config.find_package_metadata()
+    if args.target:
+        tm = TargetManager(config.proj_root, config)
+        tm.apply_target_to_runtime(args.target, config)
+        # Some targets require a specific campaign regardless of CLI defaults.
+        if getattr(config, "test_rosidl", False):
+            config.schedule = Campaign.IDL_CHECK
+            if not hasattr(config, "test_rosidl_lang"):
+                config.test_rosidl_lang = "py"
+        print(f"[*] Loaded target config: {args.target}")
+        print(f"    watchlist={config.watchlist}")
+
+    need_pkg_metadata = not (
+        config.px4_sitl
+        or config.tb3_sitl
+        or config.tb3_hitl
+        or config.test_rcl
+        or config.test_cli
+        or config.test_rosidl
+        or config.test_moveit
+    )
+    if need_pkg_metadata:
+        ret = config.find_package_metadata()
+    else:
+        ret = 0
 
     if args.exec_cmd is not None:
         if args.exec_cmd == "px4":
@@ -1853,7 +1986,7 @@ if __name__ == "__main__":
             config.exec_cmd = px4_cmd
         else:
             config.exec_cmd = args.exec_cmd
-    elif ret < 0:
+    elif ret < 0 and config.exec_cmd is None:
         config.exec_cmd = ""
 
     main(config)

@@ -19,7 +19,6 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - RCL API 跨语言一致性测试
 - CLI 与 API 一致性测试
 - Nav2 AMCL 场景（仓库内新增了 `--nav2-amcl` 分支与辅助脚本）
-- 配置化目标接入（`targets/<name>/config.json` + 可选 `plugin.py`）
 
 ## 2. 高层架构
 
@@ -27,12 +26,12 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 
 1. `fuzzer.py`（总控）
 - 解析参数、初始化日志目录、构建 `RuntimeConfig`
-- 启停目标系统（优先通过 `TargetManager`，兼容旧 `harness.py`）
+- 启停目标系统（通过 `harness.py`）
 - 发现可 fuzz 目标 topic（`inspect_target`）
 - 调度变异（`Scheduler`）
 - 执行发布与录包（`Executor`）
 - 解析 rosbag（`RosbagParser`）
-- 调用 oracle（优先 target plugin，回退 `checker.run_checks`）
+- 调用 oracle（`checker.run_checks`）
 - 依据反馈更新队列（feedback-driven queue）
 
 2. `scheduler.py`（策略调度）
@@ -103,7 +102,7 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 
 ### 4.3 CLI 参数（核心）
 - 通用：`--method --schedule --seqlen --repeat --interval --maxloop --logdir --watchlist --fuzz-seed --determ-seed --persistent --no-cov`
-- 目标选择：`--target --ros-pkg --ros-node --target-node --exec-cmd`
+- 目标选择：`--ros-pkg --ros-node --target-node --exec-cmd`
 - PX4：`--px4-sitl-ros --px4-sitl-mav --px4-sitl-pgfuzz --px4-flight-mode --px4-mission`
 - TB3：`--tb3-sitl --tb3-hitl --tb3-uri`
 - SROS2：`--sros2`
@@ -112,11 +111,6 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - CLI 一致性：`--test-cli`
 - ROSIDL：`--test-rosidl`
 - MoveIt：`--test-moveit`
-
-### 4.4 配置化目标模式（推荐）
-- `--target <name>` 会从 `targets/<name>/config.json` 读取目标配置
-- 可选加载 `targets/<name>/plugin.py`（需导出 `TargetPlugin` 类）
-- 未提供插件时，会自动回退到默认 `checker.run_checks` 路径
 
 ## 5. 核心模块接口清单
 
@@ -176,19 +170,6 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - `FeedbackType(Enum)`：`INC/DEC/ZERO/TARGET`
 - `Feedback`：`update_value/is_interesting/reset/...`
 
-### 5.9 `src/target_manager.py`
-- 自动扫描并注册 `targets/*/config.json`
-- `get_target_config()` / `apply_target_to_runtime()`
-- `start_target()` / `stop_target()` 生命周期托管
-- `get_plugin()` 动态加载目标插件
-- `get_field_whitelist()` / `get_feedback_defs()` 配置化调度输入
-
-### 5.10 `src/target_plugins.py`
-- `BaseTargetPlugin` 基础插件接口
-  - `pre_exec_hook(msg)`
-  - `post_exec_hook()`
-  - `check_oracle(config, msg_list, state_dict, feedback_list)`
-
 ## 6. Oracle 模块说明
 
 所有 oracle 统一接口：
@@ -228,76 +209,95 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 
 ## 9. 如何接入新的 fuzz 项目（重点）
 
-现在推荐“零改 fuzzer 代码”的配置化接入流程。
+下面流程是“最稳妥、最少踩坑”的接入顺序。
 
-### 第 1 步：在 `targets/` 下新建目录
+### 第 1 步：定义测试边界与正确性语义
 
-例如：
-- `targets/new_robot/config.json`
-- `targets/new_robot/plugin.py`（可选）
+先明确：
+- 你要 fuzz 的输入接口是什么（topic/service/action）
+- 目标系统是否需要特殊启动顺序/预热动作
+- 需要监控哪些状态 topic 才能判断正确性
+- 错误定义（物理约束、协议约束、业务语义）
 
-### 第 2 步：编写 `config.json`
+### 第 2 步：新增 watchlist
 
-最小模板：
+在 `src/watchlist/` 新建 `your_target.json`，格式：
 
 ```json
 {
-  "name": "new_robot",
-  "basic": {
-    "ros_pkg": "your_pkg",
-    "ros_node": "your_node"
-  },
-  "lifecycle": {
-    "managed": true,
-    "start_cmd": "ros2 launch your_pkg your.launch.py",
-    "stop_cmd": "pkill -f your_pkg",
-    "warmup_sec": 5.0
-  },
-  "fuzzing": {
-    "default_topic": "/cmd",
-    "default_msg_type": "geometry_msgs/msg/Twist",
-    "field_whitelist": [
-      ["linear", "x", "float64"],
-      ["angular", "z", "float64"]
-    ]
-  },
-  "monitoring": {
-    "watchlist": "../../src/watchlist/your_target.json",
-    "plugin": "plugin.py"
-  },
-  "runtime": {
-    "persistent": true
-  }
+  "/topic_a": "pkg/msg/TypeA",
+  "/topic_b": "pkg/msg/TypeB"
 }
 ```
 
-说明：
-- `lifecycle.managed=true`：由 `TargetManager.start_target/stop_target` 托管
-- `lifecycle.managed=false`：复用现有 legacy 启停逻辑（便于平滑迁移）
-- `runtime`：可把布尔开关注入 `RuntimeConfig`（如 `test_moveit`, `px4_sitl` 等）
+建议：
+- 只放判定必需 topic，避免 rosbag 膨胀
+- 包含关键输入回显/状态闭环 topic
 
-### 第 3 步：按需实现 `plugin.py`
+### 第 3 步：实现新 oracle
 
-插件需导出 `TargetPlugin(BaseTargetPlugin)`，可覆写：
-- `pre_exec_hook(msg)`：发布前消息修正
-- `post_exec_hook()`：执行后回调
-- `check_oracle(...)`：自定义语义校验
+在 `src/oracles/` 新建 `your_target.py`：
 
-未提供插件时自动回退默认 checker 分发。
-
-### 第 4 步：执行与验证
-
-```bash
-cd src
-python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
+```python
+def check(config, msg_list, state_dict, feedback_list):
+    errs = []
+    # 1) 取关心 topic
+    # 2) 做 NaN/INF + 边界 + 语义检查
+    # 3) 可选更新 feedback_list
+    return errs
 ```
 
-检查项：
-- `TargetManager` 能识别你的目标（`targets/*/config.json`）
-- 目标可正常启动/停止
-- `watchlist` 录包有效
-- oracle 输出可解释错误
-- 回归样本可复现（`logs/.../queue` + `rosbags`）
+接入点：修改 `src/checker.py` 的 `run_checks` 分发逻辑，增加分支。
+
+### 第 4 步：接入目标启动/停止 harness
+
+若默认 `ros2 run` 不能覆盖你的目标启动链路：
+- 在 `src/harness.py` 新增 `run_xxx_harness()`
+- 在 `src/fuzzer.py` 的 `run_target()` / `kill_target()` 中注册分支
+
+若需要发布前准备/发布后清理：
+- 在 `fuzz_msg()` 中为该目标配置 `pre_exec_list` / `post_exec_list`
+
+### 第 5 步：限制可变异字段（强烈建议）
+
+在 `fuzz_msg()` 的目标分支里设置 `field_whitelist`，减少无效搜索空间，例如：
+
+```python
+field_whitelist = [
+    ["linear", "x", np.dtype("float64")],
+    ["angular", "z", np.dtype("float64")],
+]
+```
+
+否则默认会对所有可达字段展开，效率和稳定性通常较差。
+
+### 第 6 步：必要时补充消息预处理
+
+如 Nav2 `LaserScan/OccupancyGrid` 这类消息对长度、帧、范围敏感，可参考：
+- `fuzzer.py::nav2_amcl_adjust_msg`
+
+对新目标也可做类似“发布前修正”，避免大量无意义 publish 失败。
+
+### 第 7 步：制定最小可复现命令
+
+新增目标后，至少固定一条 smoke 命令，写进文档：
+
+```bash
+./fuzzer.py \
+  --no-cov \
+  --ros-pkg <pkg> --ros-node <node> \
+  --watchlist watchlist/your_target.json \
+  --method message --schedule single --interval 0.1 --maxloop 100
+```
+
+### 第 8 步：验证接入质量（检查清单）
+
+- 能发现目标 topic（`inspect_target` 输出正常）
+- 发布成功率高（`errors/error-*` 中 publish failed 占比低）
+- rosbag 有有效状态数据
+- oracle 能产生可解释错误
+- 反馈值会变化（若启用 feedback）
+- 错误样本可被复现（基于 `queue/` + `rosbags/`）
 
 ## 10. 逐文件说明（全量）
 
@@ -312,7 +312,6 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 - `README_legacy.md`：原版英文说明（论文与复现实验说明）
 - `hybrid_fuzzing.md`：混合仿真+实机（以 TB3 为例）的操作指南
 - `README.md`：本中文工程说明（新）
-- `targets/`：配置化目标目录（每个目标一个子目录）
 
 ### 10.2 `src/` 顶层代码文件
 
@@ -342,8 +341,6 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 - `nav2prep.sh`：Nav2 依赖安装脚本（国内镜像）
 - `nav2_env_prep.sh`：Nav2 环境准备（apt/source 两路线）
 - `nav2build.sh`：Nav2 依赖与源码构建脚本（较重）
-- `target_manager.py`：配置化目标扫描/注册/生命周期管理
-- `target_plugins.py`：目标插件基础接口
 - `qos_override.yaml`：rosbag 录制 QoS 覆写（特别是 `/map` 与 `listen_flag`）
 - `requirements.txt`：Python 依赖（`sysv-ipc`、`kinpy`）
 - `.dockerignore`：容器构建忽略项
@@ -448,23 +445,6 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 - `src/states-0.bag/`：示例 rosbag2 数据库文件（`*.db3`, `-shm`, `-wal`）
 - `src/logs/`：运行日志目录（运行时生成）
 
-### 10.14 `targets/`（配置化目标）
-
-- `target_config.schema.json`：目标配置 schema
-- `README.md`：目标示例索引
-- `nav2_amcl/`：示例（含 `plugin.py`）
-- `turtlesim/`：示例配置
-- `turtlebot3_sitl/`：示例配置
-- `turtlebot3_hitl/`：示例配置
-- `moveit2/`：示例配置
-- `px4_sitl_ros/`：示例配置
-- `px4_sitl_mav/`：示例配置
-- `px4_sitl_pgfuzz/`：示例配置
-- `rosidl/`：示例配置
-- `rcl_api/`：示例配置
-- `cli_api/`：示例配置
-- `sros2/`：示例配置（含本地 watchlist）
-
 ## 11. 当前代码状态与后续改进建议
 
 结合代码现状，后续改进可优先做：
@@ -494,103 +474,39 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 
 ## 12. 常用命令参考
 
-以下命令均基于新接口 `--target`，覆盖当前 `targets/` 下所有项目模块示例。
-
-### 12.1 Turtlesim(tested)
+### 通用 ROS 目标
 
 ```bash
 cd src
-python3 fuzzer.py --target turtlesim --method message --schedule single --no-cov
+python3 fuzzer.py \
+  --no-cov \
+  --ros-pkg turtlesim --ros-node turtlesim_node \
+  --watchlist watchlist/turtlesim.json \
+  --method message --schedule single --interval 0.1
 ```
 
-### 12.2 TurtleBot3 SITL(tested)
+### Nav2 AMCL
 
 ```bash
 cd src
-python3 fuzzer.py --target turtlebot3_sitl --method message --schedule single --no-cov
+./run_nav2_fuzz_in_container.sh
 ```
 
-### 12.3 TurtleBot3 HITL
+### PX4（MAVLink）
 
 ```bash
 cd src
-python3 fuzzer.py --target turtlebot3_hitl --method message --schedule single --no-cov
+python3 fuzzer.py \
+  --px4-sitl-mav --method message --schedule sequence \
+  --seqlen 100 --repeat 1 --watchlist watchlist/px4.json \
+  --interval 0.1 --px4-flight-mode POSCTL
 ```
-
-### 12.4 MoveIt2(tested)
-
-```bash
-cd src
-python3 fuzzer.py --target moveit2 --method message --schedule single --no-cov
-```
-
-### 12.5 Nav2 AMCL(tested)
-
-```bash
-cd src
-python3 fuzzer.py --target nav2_amcl --method message --schedule single --no-cov
-```
-
-### 12.6 PX4 SITL（ROS）
-
-```bash
-cd src
-python3 fuzzer.py --target px4_sitl_ros --method message --schedule sequence --seqlen 100 --repeat 1 --interval 0.02
-```
-
-### 12.7 PX4 SITL（MAVLink）(tested)
-
-```bash
-cd src
-python3 fuzzer.py --target px4_sitl_mav --method message --schedule sequence --seqlen 100 --repeat 1 --interval 0.1
-```
-
-### 12.8 PX4 SITL（PGFuzz 风格参数变异）(tested)
-
-```bash
-cd src
-python3 fuzzer.py --target px4_sitl_pgfuzz --method message --schedule single --repeat 1 --interval 15
-```
-
-### 12.9 ROSIDL 类型系统(tested)
-
-```bash
-cd src
-python3 fuzzer.py --target rosidl --method message --no-cov
-```
-
-### 12.10 RCL API 一致性
-
-```bash
-cd src
-python3 fuzzer.py --target rcl_api --method message --schedule single --no-cov
-```
-
-### 12.11 CLI/API 一致性
-
-```bash
-cd src
-python3 fuzzer.py --target cli_api --method message --schedule single --no-cov
-```
-
-### 12.12 SROS2
-
-```bash
-cd src
-python3 fuzzer.py --target sros2 --method message --schedule single --no-cov
-```
-
-说明：
-- `sros2` 运行前需先准备 keystore（可参考 `src/utils/sros_init.sh`）。
-- `turtlebot3_hitl` 需先确保实机 SSH 与 `run.sh/kill.sh` 环境可用。
-- PX4 模式通常需要额外终端运行 `micrortps_agent -t UDP`。
 
 ---
 
 如果你希望，我可以在下一步继续做两件事：
 1) 把“新增 fuzz 项目接入”落成一个可直接复制的模板目录（`target_template/` + `oracle_template.py` + `watchlist_template.json`）。
 2) 按当前代码再生成一份“接口速查表”（函数签名 + 调用关系图），用于后续重构分工。
-
 
 ## 附录 A：仓库文件全路径索引（逐文件）
 
@@ -599,10 +515,8 @@ python3 fuzzer.py --target sros2 --method message --schedule single --no-cov
 - `INSTALL.md`
 - `LICENSE`
 - `README.md`
-- `README_3.13.md`
 - `README_legacy.md`
 - `REQUIREMENTS.md`
-- `Record.md`
 - `hybrid_fuzzing.md`
 - `src/checker.py`
 - `src/cli_harness.py`
@@ -691,8 +605,6 @@ python3 fuzzer.py --target sros2 --method message --schedule single --no-cov
 - `src/states-0.bag/states-0.bag_0.db3`
 - `src/states-0.bag/states-0.bag_0.db3-shm`
 - `src/states-0.bag/states-0.bag_0.db3-wal`
-- `src/target_manager.py`
-- `src/target_plugins.py`
 - `src/tests/test_arith_float.py`
 - `src/tests/test_arith_int.py`
 - `src/tests/test_flips_bool.py`
@@ -720,19 +632,3 @@ python3 fuzzer.py --target sros2 --method message --schedule single --no-cov
 - `src/watchlist/px4.json`
 - `src/watchlist/turtlebot3.json`
 - `src/watchlist/turtlesim.json`
-- `targets/README.md`
-- `targets/cli_api/config.json`
-- `targets/moveit2/config.json`
-- `targets/nav2_amcl/config.json`
-- `targets/nav2_amcl/plugin.py`
-- `targets/px4_sitl_mav/config.json`
-- `targets/px4_sitl_pgfuzz/config.json`
-- `targets/px4_sitl_ros/config.json`
-- `targets/rcl_api/config.json`
-- `targets/rosidl/config.json`
-- `targets/sros2/config.json`
-- `targets/sros2/watchlist.json`
-- `targets/target_config.schema.json`
-- `targets/turtlebot3_hitl/config.json`
-- `targets/turtlebot3_sitl/config.json`
-- `targets/turtlesim/config.json`

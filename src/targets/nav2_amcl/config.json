@@ -1,0 +1,53 @@
+{
+  "name": "nav2_amcl",
+  "basic": {
+    "ros_pkg": "nav2_amcl",
+    "ros_node": "amcl"
+  },
+  "lifecycle": {
+    "start_cmd": "ros2 launch nav2_bringup localization_launch.py use_sim_time:=False autostart:=True map:=/opt/ros/foxy/share/nav2_bringup/maps/turtlebot3_world.yaml",
+    "stop_cmd": "pkill -f nav2_bringup || true",
+    "warmup_sec": 8.0,
+    "exec_cmd": "true"
+  },
+  "fuzzing": {
+    "default_topic": "/scan",
+    "default_msg_type": "sensor_msgs/msg/LaserScan",
+    "field_whitelist_by_msg": {
+      "LaserScan": [
+        ["angle_min", "float32"],
+        ["angle_max", "float32"],
+        ["angle_increment", "float32"],
+        ["time_increment", "float32"],
+        ["scan_time", "float32"],
+        ["range_min", "float32"],
+        ["range_max", "float32"]
+      ],
+      "PoseWithCovarianceStamped": [
+        ["pose", "pose", "position", "x", "float64"],
+        ["pose", "pose", "position", "y", "float64"],
+        ["pose", "pose", "position", "z", "float64"],
+        ["pose", "pose", "orientation", "x", "float64"],
+        ["pose", "pose", "orientation", "y", "float64"],
+        ["pose", "pose", "orientation", "z", "float64"],
+        ["pose", "pose", "orientation", "w", "float64"]
+      ],
+      "OccupancyGrid": [
+        ["info", "resolution", "float32"],
+        ["info", "width", "uint32"],
+        ["info", "height", "uint32"],
+        ["info", "origin", "position", "x", "float64"],
+        ["info", "origin", "position", "y", "float64"],
+        ["info", "origin", "position", "z", "float64"],
+        ["info", "origin", "orientation", "x", "float64"],
+        ["info", "origin", "orientation", "y", "float64"],
+        ["info", "origin", "orientation", "z", "float64"],
+        ["info", "origin", "orientation", "w", "float64"]
+      ]
+    }
+  },
+  "monitoring": {
+    "watchlist": "../../watchlist/nav2_amcl.json",
+    "plugin": "plugin.py"
+  }
+}

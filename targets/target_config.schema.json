@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://robofuzz.local/target_config.schema.json",
+  "title": "RoboFuzz Target Config",
+  "type": "object",
+  "required": ["name", "basic", "lifecycle", "fuzzing", "monitoring"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique target name used by --target"
+    },
+    "basic": {
+      "type": "object",
+      "required": ["ros_pkg", "ros_node"],
+      "properties": {
+        "ros_pkg": {"type": "string"},
+        "ros_node": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "lifecycle": {
+      "type": "object",
+      "properties": {
+        "start_cmd": {"type": "string"},
+        "exec_cmd": {"type": "string"},
+        "stop_cmd": {"type": "string"},
+        "warmup_sec": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "fuzzing": {
+      "type": "object",
+      "required": ["default_topic", "default_msg_type"],
+      "properties": {
+        "default_topic": {"type": "string"},
+        "default_msg_type": {"type": "string"},
+        "field_whitelist": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {"type": ["string", "number"]}
+          }
+        },
+        "field_whitelist_by_msg": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {"type": ["string", "number"]}
+            }
+          }
+        },
+        "feedback": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": {"type": "string"},
+              "type": {"type": "string", "enum": ["INC", "DEC", "ZERO", "TARGET"]},
+              "default": {"type": ["number", "integer", "null"]}
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "monitoring": {
+      "type": "object",
+      "required": ["watchlist"],
+      "properties": {
+        "watchlist": {"type": "string"},
+        "plugin": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Optional runtime flags to map directly onto RuntimeConfig",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,33 @@
+{
+  "name": "moveit2",
+  "basic": {
+    "ros_pkg": "moveit2_tutorials",
+    "ros_node": "move_group"
+  },
+  "lifecycle": {
+    "managed": false,
+    "warmup_sec": 10.0
+  },
+  "fuzzing": {
+    "default_topic": "/metatopic",
+    "default_msg_type": "geometry_msgs/msg/Pose",
+    "field_whitelist": [
+      ["position", "x", "float64"],
+      ["position", "y", "float64"],
+      ["position", "z", "float64"]
+    ],
+    "feedback": [
+      {"name": "end_point_deviation", "type": "INC", "default": 0.0},
+      {"name": "mean_joint_pos_error", "type": "INC", "default": 0.0},
+      {"name": "max_joint_pos_error", "type": "INC", "default": 0.0},
+      {"name": "mean_joint_vel_error", "type": "INC", "default": 0.0},
+      {"name": "max_joint_vel_error", "type": "INC", "default": 0.0}
+    ]
+  },
+  "monitoring": {
+    "watchlist": "../../watchlist/moveit2.json"
+  },
+  "runtime": {
+    "test_moveit": true
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "sros2",
+  "basic": {
+    "ros_pkg": "sros2_node",
+    "ros_node": "sros2_node"
+  },
+  "lifecycle": {
+    "managed": false,
+    "warmup_sec": 2.0
+  },
+  "fuzzing": {
+    "default_topic": "/sros2_input",
+    "default_msg_type": "std_msgs/msg/String"
+  },
+  "monitoring": {
+    "watchlist": "watchlist.json"
+  },
+  "runtime": {
+    "sros2": true,
+    "sros2_enable": "true",
+    "sros2_strategy": "Enforce",
+    "sros2_enclave": "/fuzzer/sros2_node",
+    "sros2_keystore": "../../src/fuzzing_keys"
+  }
+}

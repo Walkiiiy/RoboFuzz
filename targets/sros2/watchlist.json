@@ -1,0 +1,4 @@
+{
+  "/sros2_input": "std_msgs/msg/String",
+  "/sros2_output": "std_msgs/msg/String"
+}

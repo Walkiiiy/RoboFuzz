@@ -1,0 +1,23 @@
+{
+  "name": "turtlesim",
+  "basic": {
+    "ros_pkg": "turtlesim",
+    "ros_node": "turtlesim_node"
+  },
+  "lifecycle": {
+    "managed": false,
+    "warmup_sec": 1.0
+  },
+  "fuzzing": {
+    "default_topic": "/turtle1/cmd_vel",
+    "default_msg_type": "geometry_msgs/msg/Twist",
+    "field_whitelist": [
+      ["linear", "x", "float64"],
+      ["linear", "y", "float64"],
+      ["angular", "z", "float64"]
+    ]
+  },
+  "monitoring": {
+    "watchlist": "../../watchlist/turtlesim.json"
+  }
+}

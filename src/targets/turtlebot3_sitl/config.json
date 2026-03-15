@@ -1,0 +1,28 @@
+{
+  "name": "turtlebot3_sitl",
+  "basic": {
+    "ros_pkg": "turtlebot3_gazebo",
+    "ros_node": "turtlebot3_diff_drive"
+  },
+  "lifecycle": {
+    "managed": false,
+    "warmup_sec": 10.0
+  },
+  "fuzzing": {
+    "default_topic": "/cmd_vel",
+    "default_msg_type": "geometry_msgs/msg/Twist",
+    "field_whitelist": [
+      ["angular", "z", "float64"],
+      ["linear", "x", "float64"]
+    ],
+    "feedback": [
+      {"name": "theta_diff", "type": "INC"}
+    ]
+  },
+  "monitoring": {
+    "watchlist": "../../watchlist/turtlebot3.json"
+  },
+  "runtime": {
+    "tb3_sitl": true
+  }
+}
