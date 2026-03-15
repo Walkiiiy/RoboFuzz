@@ -70,11 +70,12 @@ class TargetPlugin(BaseTargetPlugin):
         # Time desynchronization poisoning.
         if random.random() < 0.15:
             if random.random() < 0.5:
-                msg.header.stamp.sec = 0
-                msg.header.stamp.nanosec = 1
+                self._safe_set_stamp(msg, 0, 1)
             else:
-                msg.header.stamp.sec = 2_147_483_647
-                msg.header.stamp.nanosec = 999_999_999
+                self._safe_set_stamp(msg, 2_147_483_647, 999_999_999)
+
+        # Regardless of prior mutations, always normalize stamp to legal ROS2 Time range.
+        self._normalize_stamp(msg)
 
         return msg
 
@@ -117,6 +118,41 @@ class TargetPlugin(BaseTargetPlugin):
 
     def _is_finite(self, x):
         return not (math.isnan(x) or math.isinf(x))
+
+    def _safe_set_stamp(self, msg, sec, nanosec):
+        try:
+            msg.header.stamp.sec = int(sec)
+            msg.header.stamp.nanosec = int(nanosec)
+        except Exception:
+            # Never let timestamp assignment crash the fuzz loop.
+            msg.header.stamp.sec = 0
+            msg.header.stamp.nanosec = 0
+
+    def _normalize_stamp(self, msg):
+        sec_min = -2147483648
+        sec_max = 2147483647
+        nsec_min = 0
+        nsec_max = 999999999
+        try:
+            sec = int(msg.header.stamp.sec)
+        except Exception:
+            sec = 0
+        try:
+            nsec = int(msg.header.stamp.nanosec)
+        except Exception:
+            nsec = 0
+
+        if sec < sec_min:
+            sec = sec_min
+        elif sec > sec_max:
+            sec = sec_max
+
+        if nsec < nsec_min:
+            nsec = nsec_min
+        elif nsec > nsec_max:
+            nsec = nsec_max
+
+        self._safe_set_stamp(msg, sec, nsec)
 
     def _to_int(self, value, default=0):
         if isinstance(value, int):

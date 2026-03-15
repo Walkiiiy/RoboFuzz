@@ -11,7 +11,8 @@
     "stop_cmd": "pkill -f nav2_bringup || true",
     "warmup_sec": 8.0,
     "exec_cmd": "true",
-    "skip_ros_pkg_check": false
+    "skip_ros_pkg_check": false,
+    "managed": true
   },
   "fuzzing": {
     "default_topic": "/scan",
@@ -167,7 +168,7 @@
     }
   },
   "monitoring": {
-    "watchlist": "../../watchlist/nav2_amcl.json",
+    "watchlist": "watchlist.json",
     "plugin": "plugin.py"
   }
 }

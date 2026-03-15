@@ -5,11 +5,13 @@
     "ros_node": "turtlebot3_node"
   },
   "lifecycle": {
-    "managed": false,
+    "managed": true,
     "warmup_sec": 10.0,
     "install_script": "install.sh",
     "verify_cmd": "ros2 pkg prefix turtlebot3_bringup >/dev/null",
-    "skip_ros_pkg_check": false
+    "skip_ros_pkg_check": false,
+    "start_cmd": "bash -lc \"ssh -i keys/tb3 ${TB3_URI:-ubuntu@192.168.0.154} ./run.sh\"",
+    "stop_cmd": "bash -lc \"ssh -i keys/tb3 ${TB3_URI:-ubuntu@192.168.0.154} ./kill.sh || true\""
   },
   "fuzzing": {
     "default_topic": "/cmd_vel",
@@ -34,7 +36,8 @@
     ]
   },
   "monitoring": {
-    "watchlist": "../../watchlist/turtlebot3.json"
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
   },
   "runtime": {
     "tb3_hitl": true,

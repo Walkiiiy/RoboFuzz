@@ -5,11 +5,13 @@
     "ros_node": "drone"
   },
   "lifecycle": {
-    "managed": false,
+    "managed": true,
     "warmup_sec": 10.0,
     "install_script": "install.sh",
     "verify_cmd": "ros2 interface show px4_msgs/msg/TrajectorySetpoint >/dev/null",
-    "skip_ros_pkg_check": true
+    "skip_ros_pkg_check": true,
+    "start_cmd": "bash -lc \"PX4_DIR=${PX4_DIR:-/robofuzz/src/targets/PX4-Autopilot}; [ -x ${PX4_DIR}/Tools/sitl_run.sh ] || { echo PX4-Autopilot-not-found; exit 1; }; ${PX4_DIR}/Tools/sitl_run.sh ${PX4_DIR}/build/px4_sitl_rtps/bin/px4 none gazebo none none ${PX4_DIR} ${PX4_DIR}/build/px4_sitl_rtps\"",
+    "stop_cmd": "pkill -f \"px4\" || true; pkill -f gzserver || true; pkill -f gzclient || true"
   },
   "fuzzing": {
     "default_topic": "/TrajectorySetpoint_PubSubTopic",
@@ -56,7 +58,8 @@
     ]
   },
   "monitoring": {
-    "watchlist": "../../watchlist/px4.json"
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
   },
   "runtime": {
     "px4_sitl": true,

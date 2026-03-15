@@ -19,7 +19,7 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - RCL API 跨语言一致性测试
 - CLI 与 API 一致性测试
 - Nav2 AMCL 场景（仓库内新增了 `--nav2-amcl` 分支与辅助脚本）
-- 配置化目标接入（`targets/<name>/config.json` + 可选 `plugin.py`）
+- 配置化目标接入（`src/targets/<name>/config.json` + 必需 `plugin.py`）
 
 ## 2. 高层架构
 
@@ -27,12 +27,12 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 
 1. `fuzzer.py`（总控）
 - 解析参数、初始化日志目录、构建 `RuntimeConfig`
-- 启停目标系统（优先通过 `TargetManager`，兼容旧 `harness.py`）
+- 启停目标系统（统一通过 `TargetManager`）
 - 发现可 fuzz 目标 topic（`inspect_target`）
 - 调度变异（`Scheduler`）
 - 执行发布与录包（`Executor`）
 - 解析 rosbag（`RosbagParser`）
-- 调用 oracle（优先 target plugin，回退 `checker.run_checks`）
+- 调用 oracle（仅 target plugin，无默认回退）
 - 依据反馈更新队列（feedback-driven queue）
 
 2. `scheduler.py`（策略调度）
@@ -76,7 +76,7 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - `Scheduler` 产出变异消息（或消息序列）
 - `Executor` 启动 rosbag 录制、发布消息、停止录制
 - `RosbagParser` 解析录制状态
-- `checker.run_checks` 调 oracle
+- target `plugin.py` 的 `check_oracle` 调 oracle
 - 若报错：落盘 `errors/` + 复制 rosbag 到 `rosbags/{frame}`
 - 若反馈更“有趣”：把样本压回 queue
 7. 达到 `--maxloop` 或手动中断后清理进程与资源
@@ -114,16 +114,14 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - MoveIt：`--test-moveit`
 
 ### 4.4 配置化目标模式（推荐）
-- `--target <name>` 会从 `targets/<name>/config.json` 读取目标配置
-- 可选加载 `targets/<name>/plugin.py`（需导出 `TargetPlugin` 类）
-- 未提供插件时，会自动回退到默认 `checker.run_checks` 路径
+- `--target <name>` 会从 `src/targets/<name>/config.json` 读取目标配置
+- 必须加载 `src/targets/<name>/plugin.py`（需导出 `TargetPlugin` 类）
+- 未提供插件会直接报错退出（不再有默认回退）
 
-### 4.5 关于 `targets/` 与 `src/targets/` 两个目录
-- 当前仓库保留两套目录是为了兼容两类运行方式：
-- `targets/`：仓库根目录下的“主配置目录”，`run_robofuzz.sh` 会挂载它到容器并通过 `ROBOFUZZ_TARGETS_DIR` 优先加载。
-- `src/targets/`：历史路径兼容目录，便于直接在 `src/` 工作目录运行旧流程。
-- `TargetManager` 的加载优先级是：`ROBOFUZZ_TARGETS_DIR` > `<proj_root>/targets` > `src/targets` > 当前工作目录附近的 `targets`。
-- 建议只编辑根目录 `targets/`，并保持与 `src/targets/` 同步。
+### 4.5 目标目录约束
+- 当前仅支持单一目标目录：`src/targets/`。
+- `TargetManager` 只扫描 `<proj_root>/src/targets/*/config.json`。
+- 每个 target 必须提供 `plugin.py`，不再允许默认 oracle 回退。
 
 ## 5. 核心模块接口清单
 
@@ -184,7 +182,7 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - `Feedback`：`update_value/is_interesting/reset/...`
 
 ### 5.9 `src/target_manager.py`
-- 自动扫描并注册 `targets/*/config.json`
+- 自动扫描并注册 `src/targets/*/config.json`
 - `get_target_config()` / `apply_target_to_runtime()`
 - `start_target()` / `stop_target()` 生命周期托管
 - `get_plugin()` 动态加载目标插件
@@ -237,11 +235,11 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 
 现在推荐“零改 fuzzer 代码”的配置化接入流程。
 
-### 第 1 步：在 `targets/` 下新建目录
+### 第 1 步：在 `src/targets/` 下新建目录
 
 例如：
-- `targets/new_robot/config.json`
-- `targets/new_robot/plugin.py`（可选）
+- `src/targets/new_robot/config.json`
+- `src/targets/new_robot/plugin.py`（必需）
 
 ### 第 2 步：编写 `config.json`
 
@@ -272,7 +270,7 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
     ]
   },
   "monitoring": {
-    "watchlist": "../../src/watchlist/your_target.json",
+    "watchlist": "watchlist.json",
     "plugin": "plugin.py"
   },
   "runtime": {
@@ -282,11 +280,11 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 ```
 
 说明：
-- `lifecycle.managed=true`：由 `TargetManager.start_target/stop_target` 托管
-- `lifecycle.managed=false`：复用现有 legacy 启停逻辑（便于平滑迁移）
-- `lifecycle.install_script`：依赖缺失时自动执行；脚本不存在或执行失败会直接报错退出
-- `lifecycle.verify_cmd`：运行前健康检查（例如类型支持、接口可用性）；失败会触发安装流程
-- `lifecycle.skip_ros_pkg_check=true`：用于非标准 ROS 包目标（如 legacy harness 目标），仅依赖 `verify_cmd`
+- `lifecycle.start_cmd/stop_cmd`：统一由 `TargetManager.start_target/stop_target` 托管
+- fuzz 运行不会自动安装依赖；依赖缺失会直接报错退出
+- `lifecycle.install_script`：仅用于手工安装（提示命令），不在 fuzz 期间自动执行
+- `lifecycle.verify_cmd`：运行前健康检查（例如类型支持、接口可用性）；失败会直接报错退出
+- `lifecycle.skip_ros_pkg_check=true`：用于非标准 ROS 包目标，仅依赖 `verify_cmd`
 - `runtime`：可把布尔开关注入 `RuntimeConfig`（如 `test_moveit`, `px4_sitl` 等）
 
 ### 第 3 步：按需实现 `plugin.py`
@@ -295,8 +293,7 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - `pre_exec_hook(msg)`：发布前消息修正
 - `post_exec_hook()`：执行后回调
 - `check_oracle(...)`：自定义语义校验
-
-未提供插件时自动回退默认 checker 分发。
+- 插件为必需项；缺失会在启动阶段直接报错退出。
 
 ### 第 4 步：执行与验证
 
@@ -306,7 +303,7 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 ```
 
 检查项：
-- `TargetManager` 能识别你的目标（`targets/*/config.json`）
+- `TargetManager` 能识别你的目标（`src/targets/*/config.json`）
 - 目标可正常启动/停止
 - `watchlist` 录包有效
 - oracle 输出可解释错误
@@ -325,7 +322,7 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 - `README_legacy.md`：原版英文说明（论文与复现实验说明）
 - `hybrid_fuzzing.md`：混合仿真+实机（以 TB3 为例）的操作指南
 - `README.md`：本中文工程说明（新）
-- `targets/`：配置化目标目录（每个目标一个子目录）
+- `src/targets/`：配置化目标目录（每个目标一个子目录）
 
 ### 10.2 `src/` 顶层代码文件
 
@@ -371,15 +368,10 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 - `rosidl.py`：ROSIDL 回放一致性
 - `nav2_amcl.py`：Nav2 AMCL 稳定性与 TF 语义检查
 
-### 10.4 `src/watchlist/`
+### 10.4 `src/targets/*/watchlist.json`
 
-- `empty.json`：空监控模板
-- `turtlesim.json`：Turtlesim 监控 topic
-- `turtlebot3.json`：TB3 监控 topic
-- `moveit2.json`：MoveIt2 监控 topic
-- `px4.json`：PX4 监控 topic
-- `idltest.json`：ROSIDL 大量输出 topic 列表
-- `nav2_amcl.json`：Nav2 AMCL 监控 topic
+- 每个 target 在自身目录维护独立 `watchlist.json`。
+- 新接入目标时不再编辑全局 watchlist 目录。
 
 ### 10.5 `src/ros2_fuzzer/`（第三方/历史模块）
 
@@ -461,7 +453,7 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 - `src/states-0.bag/`：示例 rosbag2 数据库文件（`*.db3`, `-shm`, `-wal`）
 - `src/logs/`：运行日志目录（运行时生成）
 
-### 10.14 `targets/`（配置化目标）
+### 10.14 `src/targets/`（配置化目标）
 
 - `target_config.schema.json`：目标配置 schema
 - `_shared/install_with_apt.sh`：通用依赖安装与校验 helper
@@ -497,11 +489,11 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 
 ## 12. 常用命令参考
 
-以下命令均基于新接口 `--target`，覆盖当前 `targets/` 下所有项目模块示例。
+以下命令均基于新接口 `--target`，覆盖当前 `src/targets/` 下所有项目模块示例。
 
 统一行为说明：
 - 每个 target 都配置了 `lifecycle.install_script` 和 `lifecycle.verify_cmd`。
-- 运行前若依赖未满足，会先自动执行 `targets/<name>/install.sh`。
+- 运行前若依赖未满足，会直接报错退出；请手工执行 `src/targets/<name>/install.sh` 后重试。
 - 若安装脚本不存在、执行失败，或安装后 `verify_cmd` 仍失败，程序会直接报错退出，不会进入假运行。
 
 ### 12.1 Turtlesim(tested)
@@ -721,26 +713,19 @@ python3 fuzzer.py --target sros2 --method message --schedule single --no-cov
 - `src/utils/set_focus.sh`
 - `src/utils/speaker.py`
 - `src/utils/sros_init.sh`
-- `src/watchlist/empty.json`
-- `src/watchlist/idltest.json`
-- `src/watchlist/moveit2.json`
-- `src/watchlist/nav2_amcl.json`
-- `src/watchlist/px4.json`
-- `src/watchlist/turtlebot3.json`
-- `src/watchlist/turtlesim.json`
-- `targets/README.md`
-- `targets/cli_api/config.json`
-- `targets/moveit2/config.json`
-- `targets/nav2_amcl/config.json`
-- `targets/nav2_amcl/plugin.py`
-- `targets/px4_sitl_mav/config.json`
-- `targets/px4_sitl_pgfuzz/config.json`
-- `targets/px4_sitl_ros/config.json`
-- `targets/rcl_api/config.json`
-- `targets/rosidl/config.json`
-- `targets/sros2/config.json`
-- `targets/sros2/watchlist.json`
-- `targets/target_config.schema.json`
-- `targets/turtlebot3_hitl/config.json`
-- `targets/turtlebot3_sitl/config.json`
-- `targets/turtlesim/config.json`
+- `src/targets/README.md`
+- `src/targets/cli_api/config.json`
+- `src/targets/moveit2/config.json`
+- `src/targets/nav2_amcl/config.json`
+- `src/targets/nav2_amcl/plugin.py`
+- `src/targets/px4_sitl_mav/config.json`
+- `src/targets/px4_sitl_pgfuzz/config.json`
+- `src/targets/px4_sitl_ros/config.json`
+- `src/targets/rcl_api/config.json`
+- `src/targets/rosidl/config.json`
+- `src/targets/sros2/config.json`
+- `src/targets/sros2/watchlist.json`
+- `src/targets/target_config.schema.json`
+- `src/targets/turtlebot3_hitl/config.json`
+- `src/targets/turtlebot3_sitl/config.json`
+- `src/targets/turtlesim/config.json`

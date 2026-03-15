@@ -5,18 +5,21 @@
     "ros_node": "sros2_node"
   },
   "lifecycle": {
-    "managed": false,
+    "managed": true,
     "warmup_sec": 2.0,
     "install_script": "install.sh",
     "verify_cmd": "python3 -c \"import rclpy\" && ros2 security --help >/dev/null 2>&1",
-    "skip_ros_pkg_check": true
+    "skip_ros_pkg_check": true,
+    "start_cmd": "bash -lc \"ROS_SECURITY_KEYSTORE=${ROS_SECURITY_KEYSTORE:-src/fuzzing_keys} ROS_SECURITY_ENABLE=true ROS_SECURITY_STRATEGY=Enforce ros2 run sros2_node sros2_node --ros-args --enclave /fuzzer/sros2_node\"",
+    "stop_cmd": "pkill -f \"sros2_node\" || true"
   },
   "fuzzing": {
     "default_topic": "/sros2_input",
     "default_msg_type": "std_msgs/msg/String"
   },
   "monitoring": {
-    "watchlist": "watchlist.json"
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
   },
   "runtime": {
     "sros2": true,

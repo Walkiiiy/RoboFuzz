@@ -34,7 +34,7 @@ def get_subframe(filename):
 
 
 def start_rosbag(frame):
-    watchlist_file = "watchlist/px4.json"
+    watchlist_file = "targets/px4_sitl_mav/watchlist.json"
     bag_dir = f"states-replay-{frame}.bag"
     print("bag:", bag_dir)
 

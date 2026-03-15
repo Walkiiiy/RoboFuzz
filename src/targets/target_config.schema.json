@@ -29,6 +29,7 @@
         "stop_cmd": {"type": "string"},
         "warmup_sec": {"type": "number", "minimum": 0}
       },
+      "required": ["start_cmd", "stop_cmd"],
       "additionalProperties": true
     },
     "fuzzing": {
@@ -72,11 +73,11 @@
     },
     "monitoring": {
       "type": "object",
-      "required": ["watchlist"],
       "properties": {
         "watchlist": {"type": "string"},
         "plugin": {"type": "string"}
       },
+      "required": ["watchlist", "plugin"],
       "additionalProperties": true
     },
     "runtime": {

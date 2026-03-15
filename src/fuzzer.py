@@ -78,13 +78,7 @@ class Fuzzer:
         self.shm_data = None
 
     def _is_managed_target(self):
-        if not (getattr(self.config, "target_name", None) and self.target_manager):
-            return False
-        tcfg = self.target_manager.get_target_config(self.config.target_name)
-        lifecycle = tcfg.get("lifecycle", {})
-        if "managed" in lifecycle:
-            return bool(lifecycle["managed"])
-        return bool(lifecycle.get("start_cmd") or lifecycle.get("exec_cmd"))
+        return bool(getattr(self.config, "target_name", None) and self.target_manager)
 
     def init_cov_map(self):
         print("[*] Initializing shm for coverage tracking")
@@ -220,150 +214,14 @@ class Fuzzer:
         )
 
     def run_target(self, ros_pkg, ros_node, exec_cmd):
-        if getattr(self.config, "target_name", None):
-            self.target_manager.ensure_target_dependencies(
-                self.config.target_name
+        if not self._is_managed_target():
+            raise RuntimeError(
+                "legacy mode removed: fuzzing now requires --target with src/targets/<name>/config.json"
             )
 
-        if self._is_managed_target():
-            print(f"[*] Starting configured target: {self.config.target_name}")
-            self.ros_pgrp = self.target_manager.start_target(
-                self.config.target_name
-            )
-            self.running = True
-            return
-
-        # os.system("ros2 daemon start")
-
-        if self.node_ptr is None:
-            self.node_ptr = rclpy.create_node("_fuzzer")
-
-        if self.config.px4_sitl:
-            print("[*] Starting PX4 SITL stack & Gazebo simulator")
-            proc = harness.run_px4_stack_sh(self.config.proj_root)
-            time.sleep(10)  # TODO: check gazebo status rather than waiting
-            print("[px4] started px4 sitl stack")
-            self.running = True
-            return
-
-        elif self.config.tb3_sitl:
-            print("[*] Starting TurtleBot3 SITL stack & Gazebo simulator")
-            self.ros_pgrp = harness.run_tb3_sitl(self.config.proj_root)
-            time.sleep(10)
-            print("[tb3] started tb3 sitl stack", self.ros_pgrp.pid)
-            self.running = True
-            return
-
-        elif self.config.tb3_hitl:
-            print("[*] Starting TurtleBot3 hardware")
-            proc = harness.run_tb3_hitl(self.config.tb3_uri)
-            time.sleep(10)
-            print("[tb3] started turtlebot3 burger")
-            self.running = True
-            return
-
-        if self.config.test_rcl:
-            print("[*] Starting RCL harness")
-            self.ros_pgrp = harness.run_rcl_api_harness(
-                self.config.test_rcl_feature,
-                self.config.test_rcl_targets,
-                self.config.test_rcl_job,
-            )
-
-            self.running = True
-
-            # add slight delay for topic discovery
-            time.sleep(5)
-
-            return
-
-        if self.config.test_cli:
-            print("[*] Starting CLI harness")
-
-            self.ros_pgrp = harness.run_cli_harness()
-
-            self.running = True
-
-            # add slight delay for topic discovery
-            time.sleep(5)
-
-            return
-
-        if self.config.test_rosidl:
-            print("[*] Starting ROSIDL harness")
-            self.ros_pgrp = harness.run_rosidl_harness(
-                self.config.test_rosidl_lang,
-                0, # self.config.test_rosidl_shmid,
-                "empty",
-            )
-
-            self.running = True
-
-            time.sleep(1)
-
-            return
-
-        if self.config.test_moveit:
-            print("[*] Starting moveit2 harness")
-            self.ros_pgrp = harness.run_moveit_harness()
-
-            self.running = True
-
-            time.sleep(15)
-
-            return
-
-        if exec_cmd is not None:
-            # Non-ROS testing (e.g., PX4)
-            # ros_run_cmd = exec_cmd
-            ros_run_cmd = exec_cmd
-            sleep_interval = 1
-        else:
-            # ROS testing
-            if os.path.exists(self.config.node_executable):
-                ros_run_cmd = self.config.node_executable
-                sleep_interval = 0.25
-            else:
-                ros_run_cmd = "ros2 run {} {}".format(ros_pkg, ros_node)
-                sleep_interval = 1
-
-            if self.config.sros2:
-                env = ""
-                env += f"ROS_SECURITY_KEYSTORE={self.config.sros2_keystore} "
-                env += f"ROS_SECURITY_ENABLE={self.config.sros2_enable} "
-                env += f"ROS_SECURITY_STRATEGY={self.config.sros2_strategy} "
-                ros_run_cmd = env + ros_run_cmd
-                ros_run_cmd += (
-                    f" --ros-args --enclave {self.config.sros2_enclave}"
-                )
-
-        if not os.path.exists(os.path.join(self.config.log_dir, "run_cmd")):
-            with open(os.path.join(self.config.log_dir, "run_cmd"), "w") as fp:
-                fp.write(ros_run_cmd)
-
-        if self.config.sros2:
-            try:
-                os.remove("/tmp/sros2_started")
-            except:
-                pass
-
-        self.ros_pgrp = sp.Popen(
-            ros_run_cmd,
-            shell=True,
-            preexec_fn=os.setpgrp,
-            stdout=sp.PIPE,
-            stderr=sp.PIPE,
-        )
-
-        if self.config.sros2:
-            while True:
-                if os.path.exists("/tmp/sros2_started"):
-                    break
-                time.sleep(0.05)
-        else:
-            time.sleep(sleep_interval)
-
-        print("[ros] started target system")
+        self.target_manager.ensure_target_dependencies(self.config.target_name)
+        print(f"[*] Starting configured target: {self.config.target_name}")
+        self.ros_pgrp = self.target_manager.start_target(self.config.target_name)
         self.running = True
 
     def kill_target(self):
@@ -371,39 +229,12 @@ class Fuzzer:
             print("[-] nothing to kill")
             return
 
-        if self._is_managed_target():
-            self.target_manager.stop_target(self.config.target_name)
-            self.running = False
-            if self.node_ptr is not None:
-                self.node_ptr.destroy_node()
-                self.node_ptr = None
-            return
-
-        if self.config.px4_sitl:
-            os.system("pkill px4")
-            self.running = False
-
-        elif self.config.tb3_hitl:
-            os.system(f"ssh -i keys/tb3 {self.config.tb3_uri} ./kill.sh")
-            self.running = False
-
-        else:
-            try:
-                # send SIGINT instead of SIGTERM so turtle can handle signal
-                # and terminate gracefully to create gcda files.
-                os.killpg(self.ros_pgrp.pid, signal.SIGKILL)
-                self.running = False
-            except ProcessLookupError as e:
-                print("[-] killpg error:", e)
-            except Exception as e:
-                print("[-] killpg failed for some reason:", e)
-
-            if self.config.tb3_sitl:
-                os.system("pkill gzserver")
-
-        self.node_ptr.destroy_node()
-        self.node_ptr = None
-        # os.system("ros2 daemon stop")
+        if not self._is_managed_target():
+            raise RuntimeError(
+                "legacy mode removed: fuzzing now requires --target configuration"
+            )
+        self.target_manager.stop_target(self.config.target_name)
+        self.running = False
 
     def kill_monitor(self):
         # kill state monitor
@@ -699,7 +530,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
         return out
 
     if len(fuzz_targets) == 0:
-        print("[-] Could not discover ROS topic")
+        raise RuntimeError("Could not discover ROS topic from target configuration")
 
     for target in fuzz_targets:
         print("\n----- TARGET INFO -----")
@@ -1160,16 +991,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
             fuzzer.loop += 1
 
             if retval:
-                errs.append(f"publish failed: {failure_msg}")
-
-                err_file = os.path.join(
-                    fuzzer.config.error_dir, f"error-{frame}"
-                )
-
-                with open(err_file, "a") as fp:
-                    fp.write(str(errs))
-
-                continue # don't check states as nothing's published
+                raise RuntimeError(f"publish failed: {failure_msg}")
 
             state_dict_list = []
             # repeated campaigns result in multiple bag files
@@ -1180,14 +1002,13 @@ def fuzz_msg(fuzzer, fuzz_targets):
                 )
 
                 if parser.abort:
-                    print("[-] corrupted recorded states. Abort.")
-                    continue
+                    raise RuntimeError("corrupted recorded states. abort.")
 
                 state_msgs_dict = parser.process_messages()
-                # if dict is empty, fallback to all messages w/o ts filtering
                 if len(state_msgs_dict) == 0:
-                    print("[-] watch failed")
-                    state_msgs_dict = parser.process_all_messages()
+                    raise RuntimeError(
+                        "watch failed: no messages captured in watch window"
+                    )
 
                 # state_dict = checker.group_msgs_by_topic(state_msgs_dict)
 
@@ -1222,14 +1043,13 @@ def fuzz_msg(fuzzer, fuzz_targets):
                 # state_monitor.rosbag_proc = None
 
                 # print("run checks")
-                if fuzzer.target_plugin:
-                    errs = fuzzer.target_plugin.check_oracle(
-                        fuzzer.config, msg_list, state_msgs_dict, fbk_list
+                if not fuzzer.target_plugin:
+                    raise RuntimeError(
+                        f"target '{fuzzer.config.target_name}' has no plugin; default oracle fallback is removed"
                     )
-                else:
-                    errs = checker.run_checks(
-                        fuzzer.config, msg_list, state_msgs_dict, fbk_list
-                    )
+                errs = fuzzer.target_plugin.check_oracle(
+                    fuzzer.config, msg_list, state_msgs_dict, fbk_list
+                )
                 errs = list(set(errs))
                 # TODO: bring error logging and is_interesting here
 
@@ -1393,10 +1213,15 @@ def main(config):
 
     rclpy.init(args=args)
     fuzzer = Fuzzer("_fuzzer", config)
-    if getattr(config, "target_name", None):
-        fuzzer.target_manager = TargetManager(config.proj_root, config)
-        fuzzer.target_plugin = fuzzer.target_manager.get_plugin(
-            config.target_name, config
+    if not getattr(config, "target_name", None):
+        raise RuntimeError("legacy mode removed: --target is required")
+    fuzzer.target_manager = TargetManager(config.proj_root, config)
+    fuzzer.target_plugin = fuzzer.target_manager.get_plugin(
+        config.target_name, config
+    )
+    if fuzzer.target_plugin is None:
+        raise RuntimeError(
+            f"target '{config.target_name}' must provide monitoring.plugin (default oracle removed)"
         )
 
     fuzzer.init_cov_map()
@@ -1582,7 +1407,7 @@ if __name__ == "__main__":
     )
     argparser.add_argument(
         "--watchlist",
-        default="watchlist/empty.json",
+        default="targets/cli_api/watchlist.json",
         type=str,
         help="path to the file containing topic watchlist",
     )
@@ -1590,7 +1415,7 @@ if __name__ == "__main__":
         "--target",
         default="",
         type=str,
-        help="configured target name under <proj_root>/targets/<name>/config.json",
+        help="configured target name under <proj_root>/src/targets/<name>/config.json",
     )
     argparser.add_argument(
         "--determ-seed",
@@ -1836,8 +1661,8 @@ if __name__ == "__main__":
             config.rosnode = "amcl"
         if args.target_node is None:
             config.target_node = "amcl"
-        if args.watchlist == "watchlist/empty.json":
-            config.watchlist = "watchlist/nav2_amcl.json"
+        if args.watchlist == "targets/cli_api/watchlist.json":
+            config.watchlist = "targets/nav2_amcl/watchlist.json"
     else:
         config.nav2_amcl = False
 
@@ -1945,30 +1770,21 @@ if __name__ == "__main__":
         config.test_moveit = False
 
     config.exec_cmd = None
-    if args.target:
-        tm = TargetManager(config.proj_root, config)
-        tm.apply_target_to_runtime(args.target, config)
-        # Some targets require a specific campaign regardless of CLI defaults.
-        if getattr(config, "test_rosidl", False):
-            config.schedule = Campaign.IDL_CHECK
-            if not hasattr(config, "test_rosidl_lang"):
-                config.test_rosidl_lang = "py"
-        print(f"[*] Loaded target config: {args.target}")
-        print(f"    watchlist={config.watchlist}")
+    if not args.target:
+        raise RuntimeError("legacy mode removed: --target is required")
 
-    need_pkg_metadata = not (
-        config.px4_sitl
-        or config.tb3_sitl
-        or config.tb3_hitl
-        or config.test_rcl
-        or config.test_cli
-        or config.test_rosidl
-        or config.test_moveit
-    )
-    if need_pkg_metadata:
-        ret = config.find_package_metadata()
-    else:
-        ret = 0
+    tm = TargetManager(config.proj_root, config)
+    tm.apply_target_to_runtime(args.target, config)
+    # Some targets require a specific campaign regardless of CLI defaults.
+    if getattr(config, "test_rosidl", False):
+        config.schedule = Campaign.IDL_CHECK
+        if not hasattr(config, "test_rosidl_lang"):
+            config.test_rosidl_lang = "py"
+    print(f"[*] Loaded target config: {args.target}")
+    print(f"    watchlist={config.watchlist}")
+
+    # Unified target flow relies on target lifecycle, not package metadata probing.
+    ret = 0
 
     if args.exec_cmd is not None:
         if args.exec_cmd == "px4":

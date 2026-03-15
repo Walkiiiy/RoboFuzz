@@ -46,7 +46,7 @@ ros2 node list
 python3 ./utils/nav2_amcl_feeder.py >/tmp/nav2_amcl_feeder.log 2>&1 &
 
 CMD=(./fuzzer.py --no-cov --nav2-amcl --exec-cmd "true" \
-  --watchlist watchlist/nav2_amcl.json \
+  --watchlist targets/nav2_amcl/watchlist.json \
   --method message --schedule single --interval 0.1 \
   --persistent --target-node amcl)
 

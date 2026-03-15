@@ -5,11 +5,13 @@
     "ros_node": "turtlesim_node"
   },
   "lifecycle": {
-    "managed": false,
+    "managed": true,
     "warmup_sec": 1.0,
     "install_script": "install.sh",
     "verify_cmd": "ros2 pkg prefix turtlesim >/dev/null && python3 -c \"import turtlesim.msg\"",
-    "skip_ros_pkg_check": false
+    "skip_ros_pkg_check": false,
+    "start_cmd": "ros2 run turtlesim turtlesim_node",
+    "stop_cmd": "pkill -f \"turtlesim_node\" || true"
   },
   "fuzzing": {
     "default_topic": "/turtle1/cmd_vel",
@@ -33,6 +35,7 @@
     ]
   },
   "monitoring": {
-    "watchlist": "../../watchlist/turtlesim.json"
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
   }
 }

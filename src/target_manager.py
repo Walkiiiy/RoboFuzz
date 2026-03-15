@@ -1,7 +1,7 @@
 """Target registry and lifecycle manager.
 
 This module enables configuration-driven target onboarding by scanning
-`<project_root>/targets/*/config.json` at runtime.
+`<project_root>/src/targets/*/config.json` at runtime.
 """
 
 from __future__ import annotations
@@ -30,30 +30,8 @@ class TargetManager:
         self._scan_targets()
 
     def _get_candidate_target_roots(self):
-        roots = []
-        env_root = os.getenv("ROBOFUZZ_TARGETS_DIR")
-        if env_root:
-            roots.append(env_root)
-
-        roots.append(os.path.join(self.proj_root, "targets"))
-
-        src_dir = getattr(self.runtime_config, "src_dir", None)
-        if src_dir:
-            roots.append(os.path.join(src_dir, "targets"))
-            roots.append(os.path.join(os.path.dirname(src_dir), "targets"))
-
-        roots.append(os.path.join(os.getcwd(), "targets"))
-        roots.append(os.path.join(os.getcwd(), "..", "targets"))
-
-        uniq = []
-        seen = set()
-        for root in roots:
-            root = os.path.abspath(root)
-            if root in seen:
-                continue
-            seen.add(root)
-            uniq.append(root)
-        return uniq
+        # Unified target directory: only <repo>/src/targets
+        return [os.path.abspath(os.path.join(self.proj_root, "src", "targets"))]
 
     def _scan_targets(self) -> None:
         for root in self.targets_roots:
@@ -122,31 +100,7 @@ class TargetManager:
         if os.path.isabs(rel_or_abs):
             return rel_or_abs
 
-        resolved = os.path.normpath(
-            os.path.join(target_cfg["target_dir"], rel_or_abs)
-        )
-        if os.path.exists(resolved):
-            return resolved
-
-        # Fallback for mixed mount layouts:
-        # target configs may live under either <repo>/targets or <repo>/src/targets.
-        # If the relative path cannot be resolved from target_dir, try canonical
-        # locations under src/.
-        base_name = os.path.basename(rel_or_abs)
-        src_dir = getattr(self.runtime_config, "src_dir", None)
-        candidates = []
-        if src_dir:
-            candidates.append(os.path.join(src_dir, "watchlist", base_name))
-            candidates.append(os.path.join(src_dir, base_name))
-        candidates.append(os.path.join(self.proj_root, "src", "watchlist", base_name))
-        candidates.append(os.path.join(self.proj_root, "src", base_name))
-
-        for cand in candidates:
-            cand = os.path.abspath(cand)
-            if os.path.exists(cand):
-                return cand
-
-        return resolved
+        return os.path.normpath(os.path.join(target_cfg["target_dir"], rel_or_abs))
 
     def _load_plugin_class(self, target_cfg: dict):
         plugin_rel = target_cfg.get("monitoring", {}).get("plugin")
@@ -232,36 +186,15 @@ class TargetManager:
             return
 
         install_rel = lifecycle.get("install_script")
-        if not install_rel:
-            raise RuntimeError(
-                f"target '{target_cfg['name']}' requires ROS package '{ros_pkg}', "
-                "but no lifecycle.install_script is configured"
-            )
-
-        install_path = self.resolve_target_path(target_cfg, install_rel)
-        if not os.path.isfile(install_path):
-            raise FileNotFoundError(
-                f"install script not found for target '{target_cfg['name']}': {install_path}"
-            )
-
-        print(f"[target_manager] package '{ros_pkg}' not found, installing via {install_path}")
-        ret = sp.call(
-            ["bash", install_path],
-            cwd=target_cfg["target_dir"],
+        install_hint = ""
+        if install_rel:
+            install_path = self.resolve_target_path(target_cfg, install_rel)
+            install_hint = f" Install it manually: bash {install_path}"
+        raise RuntimeError(
+            f"target '{target_cfg['name']}' dependencies are not satisfied "
+            f"(ros_pkg='{ros_pkg}', verify_cmd failed)."
+            f"{install_hint}"
         )
-        if ret != 0:
-            raise RuntimeError(
-                f"install script failed for target '{target_cfg['name']}' (exit={ret})"
-            )
-
-        if (not skip_ros_pkg_check) and (not self._is_ros_pkg_available(ros_pkg)):
-            raise RuntimeError(
-                f"target '{target_cfg['name']}' install completed but ROS package '{ros_pkg}' is still missing"
-            )
-        if not self._run_verify_cmd(target_cfg):
-            raise RuntimeError(
-                f"target '{target_cfg['name']}' install completed but lifecycle.verify_cmd failed"
-            )
 
     def start_target(self, target_name: str):
         cfg = self.get_target_config(target_name)
@@ -269,8 +202,10 @@ class TargetManager:
         self._ensure_target_installed(cfg)
 
         start_cmd = lifecycle.get("start_cmd") or lifecycle.get("exec_cmd")
-        if not start_cmd:
-            return None
+        if not start_cmd or start_cmd.strip() in {"", "true", ":"}:
+            raise RuntimeError(
+                f"target '{target_name}' has invalid lifecycle.start_cmd: {start_cmd!r}"
+            )
 
         proc = sp.Popen(
             start_cmd,

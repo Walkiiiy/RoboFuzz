@@ -5,18 +5,21 @@
     "ros_node": "idltest_target"
   },
   "lifecycle": {
-    "managed": false,
+    "managed": true,
     "warmup_sec": 1.0,
     "install_script": "install.sh",
     "verify_cmd": "python3 -c \"import rosidl_runtime_py; import rosidl_generator_py\"",
-    "skip_ros_pkg_check": true
+    "skip_ros_pkg_check": true,
+    "start_cmd": "ros2 run idltest_target idltest_target",
+    "stop_cmd": "pkill -f \"idltest_target\" || true"
   },
   "fuzzing": {
     "default_topic": "/metatopic",
     "default_msg_type": "std_msgs/msg/Empty"
   },
   "monitoring": {
-    "watchlist": "../../watchlist/idltest.json"
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
   },
   "runtime": {
     "test_rosidl": true,

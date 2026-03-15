@@ -5,11 +5,13 @@
     "ros_node": "turtlebot3_diff_drive"
   },
   "lifecycle": {
-    "managed": false,
+    "managed": true,
     "warmup_sec": 10.0,
     "install_script": "install.sh",
     "verify_cmd": "ros2 pkg prefix turtlebot3_gazebo >/dev/null",
-    "skip_ros_pkg_check": false
+    "skip_ros_pkg_check": false,
+    "start_cmd": "bash -lc \"export TURTLEBOT3_MODEL=burger; ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py\"",
+    "stop_cmd": "pkill -f \"turtlebot3_gazebo\" || true; pkill -f gzserver || true; pkill -f gzclient || true"
   },
   "fuzzing": {
     "default_topic": "/cmd_vel",
@@ -34,7 +36,8 @@
     ]
   },
   "monitoring": {
-    "watchlist": "../../watchlist/turtlebot3.json"
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
   },
   "runtime": {
     "tb3_sitl": true

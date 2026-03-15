@@ -11,7 +11,8 @@
     "start_cmd": "bash -lc \"source /opt/ros/foxy/setup.bash; if [ -f /robofuzz/robot_localization_ws/install/setup.bash ]; then source /robofuzz/robot_localization_ws/install/setup.bash; fi; ros2 run robot_localization ekf_node --ros-args --params-file params/ekf.yaml\"",
     "stop_cmd": "pkill -f \"robot_localization.*ekf\" || true",
     "warmup_sec": 2.0,
-    "exec_cmd": "true"
+    "exec_cmd": "true",
+    "managed": true
   },
   "fuzzing": {
     "default_topic": "/imu/data",

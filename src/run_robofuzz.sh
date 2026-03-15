@@ -11,8 +11,7 @@ IMAGE="${IMAGE:-robofuzz}"
 CONTAINER_NAME="${CONTAINER_NAME:-robofuzz}"
 FUZZING_FILE="${FUZZING_FILE:-$SCRIPT_DIR/fuzzer.py}"
 LOGS_DIR="${LOGS_DIR:-$SCRIPT_DIR/logs}"
-TARGETS_DIR="${TARGETS_DIR:-$REPO_ROOT/targets}"
-CONTAINER_TARGETS_DIR="${CONTAINER_TARGETS_DIR:-/robofuzz/target_configs}"
+TARGETS_DIR="${TARGETS_DIR:-$REPO_ROOT/src/targets}"
 
 
 if [[ ! -f "$FUZZING_FILE" ]]; then
@@ -25,8 +24,7 @@ mkdir -p "$LOGS_DIR"
 TARGETS_MOUNT_ARGS=()
 if [[ -d "$TARGETS_DIR" ]]; then
   TARGETS_MOUNT_ARGS=(
-    -v "$TARGETS_DIR:$CONTAINER_TARGETS_DIR"
-    -e "ROBOFUZZ_TARGETS_DIR=$CONTAINER_TARGETS_DIR"
+    -v "$TARGETS_DIR:/robofuzz/src/targets"
   )
 else
   echo "[run_robofuzz] targets dir not found, skipping mount: $TARGETS_DIR" >&2

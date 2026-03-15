@@ -81,7 +81,7 @@ if __name__ == "__main__":
         config = config.RuntimeConfig()
         config.test_rosidl = True
         config.test_rosidl_lang = "cpp"
-        config.watchlist = "watchlist/idltest.json"
+        config.watchlist = "targets/rosidl/watchlist.json"
         config.replay = True
 
         fuzzer = Fuzzer("_fuzzer", config)
