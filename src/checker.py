@@ -182,7 +182,6 @@ def run_checks(config, msg_list, state_dict, feedback_list=[]):
             "/joint_states" not in state_dict
             and "/panda_arm_controller/state" not in state_dict
             and "/move_action/_action/status" not in state_dict
-            and "/motion_plan_request" not in state_dict
         ):
             print("[checker] no state available")
             return errs

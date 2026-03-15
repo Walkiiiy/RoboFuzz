@@ -1,3 +1,1 @@
 publisher: beginning loop
-publishing #1: sensor_msgs.msg.Imu(header=std_msgs.msg.Header(stamp=builtin_interfaces.msg.Time(sec=0, nanosec=0), frame_id=''), orientation=geometry_msgs.msg.Quaternion(x=4.996740867615137e-233, y=0.0, z=0.0, w=0.0), orientation_covariance=array([0., 0., 0., 0., 0., 0., 0., 0., 0.]), angular_velocity=geometry_msgs.msg.Vector3(x=0.0, y=0.0, z=0.0), angular_velocity_covariance=array([0., 0., 0., 0., 0., 0., 0., 0., 0.]), linear_acceleration=geometry_msgs.msg.Vector3(x=0.0, y=0.0, z=0.0), linear_acceleration_covariance=array([0., 0., 0., 0., 0., 0., 0., 0., 0.]))
-

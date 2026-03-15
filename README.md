@@ -15,6 +15,9 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - PX4（SITL，ROS 通道 / MAVLink 通道 / 参数变异）
 - TurtleBot3（SITL / HITL）
 - MoveIt2（Panda）
+- `ros2_control` / `joint_trajectory_controller`
+- `slam_toolbox`（上层建图任务）
+- `image_proc`（上层感知处理）
 - ROSIDL 类型系统测试
 - RCL API 跨语言一致性测试
 - CLI 与 API 一致性测试
@@ -33,6 +36,7 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - 执行发布与录包（`Executor`）
 - 解析 rosbag（`RosbagParser`）
 - 调用 oracle（仅 target plugin，无默认回退）
+- 调用 `error_recorder.py` 产出结构化错误证据
 - 依据反馈更新队列（feedback-driven queue）
 
 2. `scheduler.py`（策略调度）
@@ -225,11 +229,91 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 
 关键子目录：
 - `queue/`：发送消息样本（pickle）
-- `metadata/`：每轮元信息（目标节点/话题/类型/cycle/round）
-- `errors/`：oracle 报错
+- `metadata/`：每轮元信息与结构化上下文
+- `errors/`：原始错误文本 + 结构化错误 JSON
 - `cov/`：反馈值落盘
 - `rosbags/`：错误用例对应的 rosbag
 - `cmd` / `args`：运行命令与参数快照
+
+当前新增的结构化错误记录由 `src/error_recorder.py` 负责，重点文件包括：
+- `errors/error-<frame>`：兼容旧流程的原始错误字符串
+- `errors/error-<frame>.json`：结构化错误对象，供独立分析器消费
+- `metadata/context-<frame>.json`：目标配置、watchlist、plugin 等运行上下文
+- `metadata/execution-summary-<frame>.json`：目标是否启动、发布是否成功、rosbag 是否启动等执行链事实
+- `metadata/input-summary-<frame>.json`：输入消息摘要，包含 `NaN/INF/极值/时间戳` 标记
+- `metadata/observation-summary-<frame>.json`：各 watch topic 的消息计数与类型
+- `metadata/diagnostics-summary-<frame>.json`：从 `/diagnostics` 提炼出的级别与错误摘要
+
+这些文件的目的不是在 `src/` 内做“漏洞判断”，而是为仓库外层的 `agent/falseAnalyzer/` 提供稳定证据。
+
+## 8.1 falseAnalyzer：独立错误审查与 LLM 过滤
+
+`falseAnalyzer` 是一个与 fuzz 主流程解耦的独立 triage agent，目录位于：
+- `agent/falseAnalyzer/`
+
+设计原则：
+- `src/` 负责记录事实，不做价值判断
+- `agent/falseAnalyzer/` 负责读取日志、做规则筛选，并可选调用 LLM（当前支持 DeepSeek）
+- 先做“是否值得继续探查”的分诊，再决定是否进入 replay / 人工分析 / 安全审查
+
+### 使用方式
+
+先正常运行 RoboFuzz。新版本会在 `src/logs/<run_id>/` 下自动产生结构化错误日志。
+
+规则分诊模式：
+
+```bash
+cd /home/walkiiiy/RoboFuzz/agent/falseAnalyzer
+python3 -m false_analyzer.cli \
+  --run /home/walkiiiy/RoboFuzz/src/logs/<run_id> \
+  --output /home/walkiiiy/RoboFuzz/agent/falseAnalyzer/output
+```
+
+使用 DeepSeek 做 LLM 分诊：
+
+```bash
+export DEEPSEEK_API_KEY="your_key_here"
+export DEEPSEEK_BASE_URL="https://api.deepseek.com"
+export DEEPSEEK_MODEL="deepseek-chat"
+
+cd /home/walkiiiy/RoboFuzz/agent/falseAnalyzer
+python3 -m false_analyzer.cli \
+  --run /home/walkiiiy/RoboFuzz/src/logs/<run_id> \
+  --output /home/walkiiiy/RoboFuzz/agent/falseAnalyzer/output \
+  --use-llm
+```
+
+兼容旧日志：
+- 历史样本多数仍在 `src/logs/legacy/<run_id>/`
+- `falseAnalyzer` 会自动回退读取旧版 `error-*` 文件，但旧样本缺少 `execution/input/observation` 结构化上下文，因此判断置信度通常低于新日志
+
+输出位置：
+- `agent/falseAnalyzer/output/<run_id>/summary.json`
+- `agent/falseAnalyzer/output/<run_id>/<case_id>.json`
+
+### 现有框架下，什么样的错误更值得探查
+
+经过规则层与 LLM 过滤后，通常更值得继续做 replay 或人工分析的，是下面这些 case：
+
+- 下游输出或状态发生异常，而不是只停留在发布端报错
+- 目标自己的 `/diagnostics` 报出 `level >= 2` 或明确内部错误
+- 多个信号同时支持异常，例如 `covariance exploded` 加 `diagnostics`，或 `liveness` 加稳定复现
+- 出现空间/运动/控制语义破坏，例如 `teleportation`、`tf missing map->odom transform`、MoveIt action 状态错误、末端位姿严重偏差
+- 目标仍正常启动且发布成功，但输出 topic 消失、状态估计发散、规划语义失真
+- 不是输入本身的直接镜像，而是目标内部处理后放大的异常
+
+在当前框架下，通常优先级较低、应先排除环境因素的错误包括：
+
+- `publish failed` 且栈停在 ROS CLI / type support / import 阶段
+- `UnsupportedTypeSupport`、依赖缺失、目标未启动、watchlist 配错
+- `watch failed: no messages captured` 但没有更多执行链证据
+- 输入本身已经是 `NaN/INF/极端时间戳`，而输出只是同字段机械回显
+- 大量重复、无新增后果、无 diagnostics 支撑的弱 oracle 告警
+
+推荐的调查顺序：
+1. 先看 `execution-summary`，确认目标启动和发布是否成功
+2. 再看 `observation-summary` 与 `diagnostics-summary`，判断异常是否真实发生在目标输出链
+3. 最后再结合 `input-summary` 判断它是“系统脆弱性”还是“输入值直接回显”
 
 ## 9. 如何接入新的 fuzz 项目（重点）
 
@@ -459,6 +543,11 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 - `_shared/install_with_apt.sh`：通用依赖安装与校验 helper
 - `README.md`：目标示例索引
 - 每个目标目录均包含 `config.json` + `install.sh`（`nav2_amcl` 还包含 `plugin.py`）
+- 新目标接入前，建议先阅读 [src/targets/README.md](/home/walkiiiy/RoboFuzz/src/targets/README.md) 中“避免系统性假阳性”一节。
+- 接入时至少验证三层是否对齐：
+  - 输入层：消息是否真的被目标消费
+  - 观测层：watchlist 是否真的看到预期下游信号
+  - 判定层：oracle 是否只在有意义异常时报警
 
 ## 11. 当前代码状态与后续改进建议
 

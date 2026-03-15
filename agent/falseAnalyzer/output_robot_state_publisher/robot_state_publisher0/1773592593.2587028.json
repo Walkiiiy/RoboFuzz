@@ -1,0 +1,35 @@
+{
+  "case_id": "1773592593.2587028",
+  "confidence": 0.6,
+  "counter_evidence": [
+    "Input contains extreme numeric values, which may reduce exploit significance.",
+    "No target errors or diagnostics reported.",
+    "Normal operation indicators present (publish succeeded, target started)."
+  ],
+  "investigation_score": 26,
+  "is_broad_vulnerability_candidate": false,
+  "likely_root_cause_class": "observation_failure",
+  "llm_model": "deepseek-chat",
+  "llm_ready": true,
+  "llm_summary": "The finding shows an observation failure with no messages captured in the watch window, despite successful publishing and target execution. The input contains extreme numeric values in timestamp fields, but this appears to be a monitoring/configuration issue rather than a target vulnerability. No evidence of target impact, diagnostics, semantic invariant violations, availability loss, or safety-relevant consequences.",
+  "llm_used": true,
+  "matched_patterns": [
+    "OBS_EMPTY_CAPTURE"
+  ],
+  "next_action": "inspect_watchlist",
+  "notes": [
+    "watch failed: no messages captured in watch window",
+    "Target error logs or crash details.",
+    "Evidence of downstream impact on robot state or other nodes.",
+    "Diagnostic messages from the target.",
+    "Confirmation that watchlist configuration is correct for the target."
+  ],
+  "primary_evidence": [
+    "Observed data path is incomplete or empty.",
+    "watch failed: no messages captured in watch window",
+    "publish_succeeded: true, target_started: true, target_exited_early: false"
+  ],
+  "run_id": "robot_state_publisher0",
+  "verdict": "replay_first",
+  "vuln_level": "V1"
+}

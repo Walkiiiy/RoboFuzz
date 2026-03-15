@@ -1,0 +1,4 @@
+{
+  "/camera/image_rect": "sensor_msgs/msg/Image",
+  "/diagnostics": "diagnostic_msgs/msg/DiagnosticArray"
+}

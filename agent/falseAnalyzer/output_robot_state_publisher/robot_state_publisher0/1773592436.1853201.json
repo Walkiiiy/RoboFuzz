@@ -1,0 +1,35 @@
+{
+  "case_id": "1773592436.1853201",
+  "confidence": 85.0,
+  "counter_evidence": [
+    "Input contains extreme numeric values (header.stamp.sec=1773592436, nanosec=186218738)",
+    "No evidence of target crash, hang, or abnormal exit",
+    "No semantic invariant violations detected",
+    "No availability or safety impacts observed"
+  ],
+  "investigation_score": 15,
+  "is_broad_vulnerability_candidate": false,
+  "likely_root_cause_class": "infrastructure_or_observation_failure",
+  "llm_model": "deepseek-chat",
+  "llm_ready": true,
+  "llm_summary": "The finding shows a TF coverage error ('missing expected child frames: ['link2']') but lacks evidence of downstream target impact, semantic invariant violations, availability loss, or safety consequences. The target (robot_state_publisher) published successfully, started normally, and showed no diagnostics errors. The extreme numeric values in the input are likely causing benign observation issues rather than exploiting vulnerabilities.",
+  "llm_used": true,
+  "matched_patterns": [],
+  "next_action": "discard",
+  "notes": [
+    "tf coverage missing expected child frames: ['link2']",
+    "Evidence of downstream impact on other nodes or systems",
+    "Proof that the TF error causes functional degradation",
+    "Demonstration of safety or availability consequences",
+    "Reproducibility of the issue with normal inputs"
+  ],
+  "primary_evidence": [
+    "TF coverage error: 'missing expected child frames: ['link2']'",
+    "Target published successfully and started normally",
+    "No diagnostics errors reported",
+    "Observation shows /tf and /tf_static topics active"
+  ],
+  "run_id": "robot_state_publisher0",
+  "verdict": "not_vulnerability",
+  "vuln_level": "V0"
+}

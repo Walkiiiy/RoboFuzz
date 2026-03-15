@@ -12,3 +12,4 @@ log
 out
 *.log
 states-0.bag
+output

@@ -1,0 +1,4 @@
+{
+  "/tf": "tf2_msgs/msg/TFMessage",
+  "/tf_static": "tf2_msgs/msg/TFMessage"
+}

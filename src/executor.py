@@ -11,6 +11,7 @@ import shutil
 
 import constants as c
 import ros_utils
+import error_recorder
 
 import rclpy
 from rclpy.qos import QoSProfile, HistoryPolicy, DurabilityPolicy
@@ -28,6 +29,11 @@ class ExecMode(Enum):
 class Executor:
     def __init__(self, fuzzer):
         self.fuzzer = fuzzer
+        self.current_execution_summary = {}
+        self.topic_name = None
+        self.msg_type_class = None
+        self.msg_typestr = None
+        self.rosbag_pgrp = None
 
     def prep_execution(self, msg_type_class, topic_name):
         # prepare execution
@@ -158,6 +164,7 @@ class Executor:
 
     def start_rosbag(self, exec_cnt):
         watchlist_file = self.fuzzer.config.watchlist
+        self.current_execution_summary["watchlist_file"] = watchlist_file
 
         bag_dir = f"states-{exec_cnt}.bag"
         with open(watchlist_file, "r") as fp:
@@ -182,18 +189,23 @@ class Executor:
             stderr=sp.PIPE,
         )
         print("[executor] started ros2 bag recording")
+        self.current_execution_summary["rosbag_started"] = True
 
         # need time for topics to be discovered
         time.sleep(1)
 
     def kill_rosbag(self):
+        proc = getattr(self, "rosbag_pgrp", None)
+        if proc is None:
+            print("[-] ros2 bag not initialized")
+            return
         try:
             print("[executor] killing ros2 bag")
-            os.killpg(self.rosbag_pgrp.pid, signal.SIGINT)
+            os.killpg(proc.pid, signal.SIGINT)
         except ProcessLookupError as e:
             print("[-] ros2 bag killpg error:", e)
-        except AttributeError as e:
-            print("[-] ros2 bag not initialized:", e)
+        finally:
+            self.rosbag_pgrp = None
 
     def save_msg_to_queue(self, msg, frame, subframe):
         if self.fuzzer.config.replay:
@@ -205,6 +217,7 @@ class Executor:
         )
 
         pickle.dump(md, open(queue_file, "wb"))
+        self.current_execution_summary.setdefault("queue_files", []).append(queue_file)
 
     def do_pre_execution(self, pre_exec_list):
         """
@@ -310,6 +323,30 @@ class Executor:
 
         exec_cnt = 0
         period = 1 / frequency
+        execution_summary = {
+            "frame": frame,
+            "mode": mode.name.lower(),
+            "repeat": repeat,
+            "frequency": frequency,
+            "topic_name": self.topic_name,
+            "msg_type": self.msg_typestr,
+            "target_started": False,
+            "target_exited_early": False,
+            "publish_attempted": False,
+            "publish_succeeded": False,
+            "publish_error_type": None,
+            "publish_error_text": None,
+            "rosbag_started": False,
+            "rosbag_stopped": False,
+            "watch_started": False,
+            "watch_stopped": False,
+            "plugin_pre_hook_applied": bool(self.fuzzer.target_plugin),
+            "plugin_post_hook_applied": False,
+            "queue_files": [],
+            "target_name": getattr(self.fuzzer.config, "target_name", None),
+        }
+        self.current_execution_summary = execution_summary
+        self.fuzzer.last_execution_summary = execution_summary
 
         print("[executor] len(msg_list):", len(msg_list))
 
@@ -328,11 +365,17 @@ class Executor:
 
             if not self.fuzzer.config.persistent:
                 # target should already be running in persistent mode
-                self.fuzzer.run_target(
-                    self.fuzzer.config.rospkg,
-                    self.fuzzer.config.rosnode,
-                    self.fuzzer.config.exec_cmd,
-                )
+                try:
+                    self.fuzzer.run_target(
+                        self.fuzzer.config.rospkg,
+                        self.fuzzer.config.rosnode,
+                        self.fuzzer.config.exec_cmd,
+                    )
+                    execution_summary["target_started"] = True
+                except Exception:
+                    execution_summary["target_started"] = False
+                    execution_summary["target_exited_early"] = True
+                    raise
 
             self.do_pre_execution(pre_exec_list)
 
@@ -340,6 +383,7 @@ class Executor:
             # fp.close()
             self.start_rosbag(exec_cnt)
             self.start_watching()
+            execution_summary["watch_started"] = True
 
             # self.request_start_monitor()
             # print("[executor] waiting for state monitor", end="")
@@ -363,15 +407,23 @@ class Executor:
                 # reported the issue here:
                 # https://github.com/ros2/rosidl_runtime_py/issues/14
                 if pub_function:
+                    execution_summary["publish_attempted"] = True
                     pub_function(msg)
+                    execution_summary["publish_succeeded"] = True
 
                 else:
+                    execution_summary["publish_attempted"] = True
                     ret = self.do_ros2_pub(msg)
 
                     if ret:
                         pub_failure = True
                         pub_failure_msg = ret
+                        execution_summary["publish_succeeded"] = False
+                        execution_summary["publish_error_type"] = "ros2cli_pub_error"
+                        execution_summary["publish_error_text"] = ret
                         print(f"[executor] failed to publish: {ret}")
+                    else:
+                        execution_summary["publish_succeeded"] = True
 
 
                 # self.fuzzer.pub.publish(msg)
@@ -385,15 +437,23 @@ class Executor:
                     self.save_msg_to_queue(msg, frame, subframe)
 
                     if pub_function:
+                        execution_summary["publish_attempted"] = True
                         pub_function(msg)
+                        execution_summary["publish_succeeded"] = True
 
                     else:
+                        execution_summary["publish_attempted"] = True
                         ret = self.do_ros2_pub(msg)
 
                         if ret:
                             pub_failure = True
                             pub_failure_msg = ret
+                            execution_summary["publish_succeeded"] = False
+                            execution_summary["publish_error_type"] = "ros2cli_pub_error"
+                            execution_summary["publish_error_text"] = ret
                             print(f"[executor] failed to publish: {ret}")
+                        else:
+                            execution_summary["publish_succeeded"] = True
 
                     # self.fuzzer.pub.publish(msg)
                     time.sleep(period)
@@ -424,9 +484,12 @@ class Executor:
             # while not os.path.isfile("states.pkl"):
             #     time.sleep(0.1)
             self.do_post_execution(post_exec_list)
+            execution_summary["plugin_post_hook_applied"] = bool(self.fuzzer.target_plugin)
 
             self.stop_watching()
             self.kill_rosbag()
+            execution_summary["watch_stopped"] = True
+            execution_summary["rosbag_stopped"] = True
 
             if not self.fuzzer.config.persistent:
                 # should not kill target in persistent mode

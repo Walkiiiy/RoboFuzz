@@ -47,6 +47,25 @@ class Scheduler:
             for field in blacklist:
                 self.msg_field_list.remove(field)
 
+    def _assign_attr_value(self, msg, attr_list, data_val, context):
+        attr_leaf = attr_list[-1]
+        obj = reduce(getattr, attr_list[:-1], msg)
+        try:
+            setattr(obj, attr_leaf, data_val)
+            return True
+        except (AssertionError, OverflowError, TypeError, ValueError) as exc:
+            print(
+                f"[scheduler] skip invalid mutation for "
+                f"{'.'.join(attr_list)} ({context}): {exc}"
+            )
+            return False
+
+    def _copy_and_assign(self, msg, attr_list, data_val, context):
+        nmsg = deepcopy(msg)
+        if self._assign_attr_value(nmsg, attr_list, data_val, context):
+            return nmsg
+        return None
+
     def init_schedule(self):
         if (
             self.campaign == Campaign.RND_SINGLE
@@ -962,9 +981,24 @@ class Scheduler:
                 else:
                     print("STAGE: GEN")
                     # GENERATE RANDOM DATA FOR SELECTED FIELD
-                    data_val = mutator.gen_rand_data(dtype, False)
-                    obj = reduce(getattr, attr_list[:-1], msg)
-                    setattr(obj, attr_leaf, data_val)
+                    selected_assigned = False
+                    data_val = reduce(getattr, attr_list, msg)
+                    for _ in range(32):
+                        candidate = mutator.gen_rand_data(dtype, False)
+                        if self._assign_attr_value(
+                            msg,
+                            attr_list,
+                            candidate,
+                            "gen-selected",
+                        ):
+                            data_val = candidate
+                            selected_assigned = True
+                            break
+                    if not selected_assigned:
+                        print(
+                            f"[scheduler] failed to generate valid value for "
+                            f"{'.'.join(attr_list)}; keeping default"
+                        )
                     self.fm_odata.append(data_val)
 
                     # set rest of the fields (rfield) to default
@@ -973,10 +1007,14 @@ class Scheduler:
                             continue
                         dtype = rfield[-1]
                         attr_list = rfield[:-1]
-                        attr_leaf = attr_list[-1]
                         data_val = mutator.gen_rand_data(dtype, True)
-                        obj = reduce(getattr, attr_list[:-1], msg)
-                        setattr(obj, attr_leaf, data_val)
+                        if not self._assign_attr_value(
+                            msg,
+                            attr_list,
+                            data_val,
+                            "gen-rest",
+                        ):
+                            continue
 
                     # fuzzer.fuzz_and_check(self.fuzzer, msg, frame)
 
@@ -1034,9 +1072,12 @@ class Scheduler:
                             print("data after determ mutation:", data_val)
 
                             if data_val is not None:
-                                nmsg = deepcopy(msg)
-                                obj = reduce(getattr, attr_list[:-1], nmsg)
-                                setattr(obj, attr_leaf, data_val)
+                                nmsg = self._copy_and_assign(
+                                    msg,
+                                    attr_list,
+                                    data_val,
+                                    "determ-arith",
+                                )
                                 # fuzzer.fuzz_and_check(self.fuzzer, nmsg, frame)
 
                             self.arith_val += 1
@@ -1062,9 +1103,12 @@ class Scheduler:
                                 interesting_idx=self.interesting_idx,
                             )
                             if data_val is not None:
-                                nmsg = deepcopy(msg)
-                                obj = reduce(getattr, attr_list[:-1], nmsg)
-                                setattr(obj, attr_leaf, data_val)
+                                nmsg = self._copy_and_assign(
+                                    msg,
+                                    attr_list,
+                                    data_val,
+                                    "determ-interest",
+                                )
                                 # fuzzer.fuzz_and_check(self.fuzzer, nmsg, frame)
                             # print("data after determ mutation:", data_val)
 
@@ -1081,9 +1125,12 @@ class Scheduler:
                         # print("data after determ mutation:", data_val)
 
                         if data_val is not None:
-                            nmsg = deepcopy(msg)
-                            obj = reduce(getattr, attr_list[:-1], nmsg)
-                            setattr(obj, attr_leaf, data_val)
+                            nmsg = self._copy_and_assign(
+                                msg,
+                                attr_list,
+                                data_val,
+                                "determ-generic",
+                            )
                             # fuzzer.fuzz_and_check(self.fuzzer, nmsg, frame)
 
                         # flip then move on
@@ -1154,9 +1201,12 @@ class Scheduler:
 
                 nmsg = None
                 if data_val is not None:
-                    nmsg = deepcopy(msg)
-                    obj = reduce(getattr, attr_list[:-1], nmsg)
-                    setattr(obj, attr_leaf, data_val)
+                    nmsg = self._copy_and_assign(
+                        msg,
+                        attr_list,
+                        data_val,
+                        "havoc",
+                    )
                     # fuzzer.fuzz_and_check(self.fuzzer, nmsg, frame)
 
                 self.fm_rand_stages[self.cur_fm_field] -= 1
@@ -1217,8 +1267,13 @@ class Scheduler:
             )
             # print("data after msg mutation:", data_val)
             if data_val is not None:
-                obj = reduce(getattr, attr_list[:-1], msg)
-                setattr(obj, attr_leaf, data_val)
+                if not self._assign_attr_value(
+                    msg,
+                    attr_list,
+                    data_val,
+                    "msg-all",
+                ):
+                    return (None, frame)
 
             # fuzzer.fuzz_and_check(self.fuzzer, msg, frame)
             self.num_msg_mutation += 1

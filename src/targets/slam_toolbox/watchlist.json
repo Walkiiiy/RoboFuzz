@@ -1,0 +1,5 @@
+{
+  "/map": "nav_msgs/msg/OccupancyGrid",
+  "/tf": "tf2_msgs/msg/TFMessage",
+  "/diagnostics": "diagnostic_msgs/msg/DiagnosticArray"
+}

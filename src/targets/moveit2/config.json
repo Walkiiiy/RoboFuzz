@@ -10,8 +10,8 @@
     "install_script": "install.sh",
     "verify_cmd": "ros2 pkg prefix moveit2_tutorials >/dev/null",
     "skip_ros_pkg_check": false,
-    "start_cmd": "bash -lc \"DISPLAY=${DISPLAY:-:0} ros2 launch moveit2_tutorials move_group.launch.py\"",
-    "stop_cmd": "pkill -f \"move_group.launch.py\" || true; pkill -f \"move_group\" || true"
+    "start_cmd": "bash -lc \"DISPLAY=${DISPLAY:-:0} ros2 launch moveit2_tutorials demo.launch.py\"",
+    "stop_cmd": "pkill -f \"demo.launch.py\" || true; pkill -f \"move_group.launch.py\" || true; pkill -f \"move_group\" || true"
   },
   "fuzzing": {
     "default_topic": "/metatopic",

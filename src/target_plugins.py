@@ -21,6 +21,10 @@ class BaseTargetPlugin:
         """Called after one execution finishes."""
         return None
 
+    def publish_message(self, msg):
+        """Optional custom publisher/action client hook."""
+        raise NotImplementedError
+
     def check_oracle(self, config, msg_list, state_dict, feedback_list):
         """Run target-specific oracle checks and return error strings."""
         return []

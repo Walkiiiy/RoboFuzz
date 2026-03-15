@@ -1,0 +1,79 @@
+{
+  "name": "slam_toolbox",
+  "basic": {
+    "ros_pkg": "slam_toolbox",
+    "ros_node": "slam_toolbox"
+  },
+  "lifecycle": {
+    "managed": true,
+    "warmup_sec": 25.0,
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 pkg prefix slam_toolbox >/dev/null && ros2 pkg prefix turtlebot3_gazebo >/dev/null && ros2 interface show sensor_msgs/msg/LaserScan >/dev/null && ros2 interface show nav_msgs/msg/OccupancyGrid >/dev/null",
+    "skip_ros_pkg_check": false,
+    "start_cmd": "bash start.sh",
+    "stop_cmd": ""
+  },
+  "fuzzing": {
+    "default_topic": "/scan",
+    "default_msg_type": "sensor_msgs/msg/LaserScan",
+    "field_whitelist": [
+      [
+        "angle_min",
+        "float32"
+      ],
+      [
+        "angle_max",
+        "float32"
+      ],
+      [
+        "angle_increment",
+        "float32"
+      ],
+      [
+        "time_increment",
+        "float32"
+      ],
+      [
+        "scan_time",
+        "float32"
+      ],
+      [
+        "range_min",
+        "float32"
+      ],
+      [
+        "range_max",
+        "float32"
+      ]
+    ],
+    "feedback": [
+      {
+        "name": "slam_map_seen",
+        "type": "ZERO",
+        "default": 0.0
+      },
+      {
+        "name": "slam_known_cells",
+        "type": "INC",
+        "default": 0.0
+      }
+    ]
+  },
+  "monitoring": {
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
+  },
+  "runtime": {
+    "persistent": true,
+    "slam_scan_len": 360,
+    "slam_frame_id": "base_scan",
+    "slam_range_min_default": 0.12,
+    "slam_range_max_default": 8.0,
+    "slam_position_noise": 0.15,
+    "slam_fault_reverse_scan_mod": 41,
+    "slam_fault_truncate_scan_mod": 59,
+    "slam_min_map_resolution": 0.001,
+    "slam_max_map_resolution": 2.0,
+    "slam_max_map_dim": 4096
+  }
+}

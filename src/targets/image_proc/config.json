@@ -1,0 +1,55 @@
+{
+  "name": "image_proc",
+  "basic": {
+    "ros_pkg": "image_proc",
+    "ros_node": "rectify_node"
+  },
+  "lifecycle": {
+    "managed": false,
+    "warmup_sec": 5.0,
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 pkg prefix image_proc >/dev/null && ros2 interface show sensor_msgs/msg/Image >/dev/null && ros2 interface show sensor_msgs/msg/CameraInfo >/dev/null",
+    "skip_ros_pkg_check": false,
+    "start_cmd": "bash start.sh",
+    "stop_cmd": ""
+  },
+  "fuzzing": {
+    "default_topic": "/camera/image_raw",
+    "default_msg_type": "sensor_msgs/msg/Image",
+    "field_whitelist": [
+      ["header", "stamp", "sec", "int32"],
+      ["header", "stamp", "nanosec", "uint32"],
+      ["width", "uint32"],
+      ["height", "uint32"],
+      ["step", "uint32"],
+      ["is_bigendian", "uint8"]
+    ],
+    "feedback": [
+      {
+        "name": "rect_image_seen",
+        "type": "ZERO",
+        "default": 0.0
+      },
+      {
+        "name": "rect_payload_size",
+        "type": "INC",
+        "default": 0.0
+      }
+    ]
+  },
+  "monitoring": {
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
+  },
+  "runtime": {
+    "persistent": true,
+    "image_proc_width": 64,
+    "image_proc_height": 48,
+    "image_proc_encoding": "mono8",
+    "image_proc_frame_id": "camera_optical_frame",
+    "image_proc_dim_delta": 8,
+    "image_proc_fault_dim_mod": 43,
+    "image_proc_fault_flip_mod": 61,
+    "image_proc_max_pixels": 307200
+  }
+}

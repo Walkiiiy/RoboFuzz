@@ -39,12 +39,6 @@ def check(config, msg_list, state_dict, feedback_list):
         print("[checker] no /move_action/_action/status data available")
         move_action_status_list = list()
 
-    try:
-        motion_plan_request_list = state_dict["/motion_plan_request"]
-    except KeyError:
-        print("[checker] no /motion_plan_request data available")
-        motion_plan_request_list = list()
-
     # 1. joint position and velocity
     # Seven revolute joints have different position limits (deg):
     #   A1, A3, A5, A7: -166/166
@@ -221,152 +215,131 @@ def check(config, msg_list, state_dict, feedback_list):
     else:
         errs.append(f"invalid goal action status: {str(action_status)}")
 
-    # 4. check if only one motion_plan_request was received
-    num_motion_plan_request = len(motion_plan_request_list)
-    if num_motion_plan_request != 1:
-        errs.append(f"# Motion plan request != 1: ({num_motion_plan_request})")
+    # 4. derive the requested goal from the fuzz input itself. The action
+    # client path used by this target does not reliably expose a public
+    # /motion_plan_request topic, so the fuzzed Pose is the authoritative goal.
+    if len(msg_list) != 1:
+        errs.append(f"# fuzzed moveit goals != 1: ({len(msg_list)})")
+        return errs
 
-    else:
-        # retrieve the requested goal
-        (ts, mpr) = motion_plan_request_list[0]
-        goal_constraints = mpr.goal_constraints[0]
-        goal_position = goal_constraints.position_constraints[0].constraint_region.primitive_poses[0].position
-        goal_orientation = goal_constraints.orientation_constraints[0].orientation
+    if final_joint_state is None:
+        errs.append("no final joint state available")
+        return errs
 
-        goal_x = goal_position.x
-        goal_y = goal_position.y
-        goal_z = goal_position.z
-        goal_w = goal_orientation.w
+    goal_pose = msg_list[0]
+    goal_x = goal_pose.position.x
+    goal_y = goal_pose.position.y
+    goal_z = goal_pose.position.z
+    goal_w = goal_pose.orientation.w
 
-        # 5. check endpoint w.r.t. action status
-        joint_angle_map = dict()
-        for i, name in enumerate(final_joint_state.name):
-            joint_angle_map[name] = final_joint_state.position[i]
+    # 5. check endpoint w.r.t. action status
+    joint_angle_map = dict()
+    for i, name in enumerate(final_joint_state.name):
+        joint_angle_map[name] = final_joint_state.position[i]
 
-        fwd_kinematics_sol = chain.forward_kinematics(joint_angle_map)
-        final_end_effector_pos = fwd_kinematics_sol["panda_hand"].pos
-        final_end_effector_rot = fwd_kinematics_sol["panda_hand"].rot
+    fwd_kinematics_sol = chain.forward_kinematics(joint_angle_map)
+    final_end_effector_pos = fwd_kinematics_sol["panda_hand"].pos
 
-        final_pos_x = final_end_effector_pos[0]
-        final_pos_y = final_end_effector_pos[1]
-        final_pos_z = final_end_effector_pos[2]
+    final_pos_x = final_end_effector_pos[0]
+    final_pos_y = final_end_effector_pos[1]
+    final_pos_z = final_end_effector_pos[2]
 
-        if len(action_status) == 2 and action_status[-1] == 4:
-            # action succeeded - endpoint should be at the goal
-            # 1) run forward kinematics with joint positions to find
-            #    the end-effector position & orientation
-            # 2) compare with goal position & orientation
+    if len(action_status) == 2 and action_status[-1] == 4:
+        dist_goal_to_final_pos = math.sqrt(
+            pow(goal_x - final_pos_x, 2)
+            + pow(goal_y - final_pos_y, 2)
+            + pow(goal_z - final_pos_z, 2)
+        )
 
-            # pose repeatability < 0.1 mm (ISO 9283)
+        for feedback in feedback_list:
+            if feedback.name == "end_point_deviation":
+                feedback.update_value(dist_goal_to_final_pos)
 
-            dist_goal_to_final_pos = math.sqrt(
-                pow(goal_x - final_pos_x, 2)
-                + pow(goal_y - final_pos_y, 2)
-                + pow(goal_z - final_pos_z, 2)
-            )
+            elif feedback.name == "mean_joint_pos_error":
+                if len(error_pos_values) > 0:
+                    feedback.update_value(
+                        statistics.mean(error_pos_values)
+                    )
 
-            for feedback in feedback_list:
-                if feedback.name == "end_point_deviation":
-                    feedback.update_value(dist_goal_to_final_pos)
+            elif feedback.name == "max_joint_pos_error":
+                if len(error_pos_values) > 0:
+                    feedback.update_value(
+                        max(error_pos_values)
+                    )
 
-                elif feedback.name == "mean_joint_pos_error":
-                    if len(error_pos_values) > 0:
-                        feedback.update_value(
-                            statistics.mean(error_pos_values)
-                        )
+            elif feedback.name == "mean_joint_vel_error":
+                if len(error_vel_values) > 0:
+                    feedback.update_value(
+                        statistics.mean(error_vel_values)
+                    )
 
-                elif feedback.name == "max_joint_pos_error":
-                    if len(error_pos_values) > 0:
-                        feedback.update_value(
-                            max(error_pos_values)
-                        )
+            elif feedback.name == "max_joint_vel_error":
+                if len(error_vel_values) > 0:
+                    feedback.update_value(
+                        max(error_vel_values)
+                    )
 
-                elif feedback.name == "mean_joint_vel_error":
-                    if len(error_vel_values) > 0:
-                        feedback.update_value(
-                            statistics.mean(error_vel_values)
-                        )
+        print(f"D: {dist_goal_to_final_pos:.6f}")
+        if dist_goal_to_final_pos > 0.001: # unit: m
+            errs.append(f"goal and actual pos deviation too high: {dist_goal_to_final_pos}")
 
-                elif feedback.name == "max_joint_vel_error":
-                    if len(error_vel_values) > 0:
-                        feedback.update_value(
-                            max(error_vel_values)
-                        )
+    elif len(action_status) == 2 and action_status[-1] == 6:
+        ready_pos_x = 0.306890566
+        ready_pos_y = 0
+        ready_pos_z = 0.590282052
 
+        dist_ready_to_final_pos = math.sqrt(
+            pow(ready_pos_x - final_pos_x, 2)
+            + pow(ready_pos_y - final_pos_y, 2)
+            + pow(ready_pos_z - final_pos_z, 2)
+        )
 
-            print(f"D: {dist_goal_to_final_pos:.6f}")
-            if dist_goal_to_final_pos > 0.001: # unit: m
-                errs.append(f"goal and actual pos deviation too high: {dist_goal_to_final_pos}")
+        print(f"D: {dist_ready_to_final_pos:.6f}")
+        if dist_ready_to_final_pos > 0.001: # unit: m
+            errs.append(f"robot shouldn't have moved: {dist_ready_to_final_pos}")
 
-        elif len(action_status) == 2 and action_status[-1] == 6:
-            # action aborted - endpoint should be at the initial pos
-            # assure no joint has moved (thereby no endpoint movement)
+        tf_goal = kinpy.Transform()
+        tf_goal.rot[0] = 0.0
+        tf_goal.rot[1] = 0.0
+        tf_goal.rot[2] = 0.0
+        tf_goal.rot[3] = goal_w
+        tf_goal.pos[0] = goal_x
+        tf_goal.pos[1] = goal_y
+        tf_goal.pos[2] = goal_z
 
-            # [extra] check if an inverse kinematics solution exists.
-            # If so, (and if the joint angles are within the constraints),
-            # the controller should've found the solution and moved the
-            # manipulator.
+        try:
+            ik = serial_chain.inverse_kinematics(tf_goal)
+        except Exception:
+            return errs
 
-            """
-            0.30689056659294117 -5.2219761264512675e-12 0.5902820523028391
-            """
-            ready_pos_x = 0.306890566
-            ready_pos_y = 0
-            ready_pos_z = 0.590282052
+        joints = serial_chain.get_joint_parameter_names()
+        valid_cnt = 0
 
-            dist_ready_to_final_pos = math.sqrt(
-                pow(ready_pos_x - final_pos_x, 2)
-                + pow(ready_pos_y - final_pos_y, 2)
-                + pow(ready_pos_z - final_pos_z, 2)
-            )
+        for i, joint_angle in enumerate(ik):
+            joint_name = joints[i]
+            angle = math.degrees(joint_angle)
 
-            print(f"D: {dist_ready_to_final_pos:.6f}")
-            if dist_ready_to_final_pos > 0.001: # unit: m
-                errs.append(f"robot shouldn't have moved: {dist_ready_to_final_pos}")
+            if (joint_name == "panda_joint1" or
+                joint_name == "panda_joint3" or
+                joint_name == "panda_joint5" or
+                joint_name == "panda_joint7"):
 
-            tf_goal = kinpy.Transform()
-            tf_goal.rot[0] = 0.0
-            tf_goal.rot[1] = 0.0
-            tf_goal.rot[2] = 0.0
-            tf_goal.rot[3] = goal_w
-            tf_goal.pos[0] = goal_x
-            tf_goal.pos[1] = goal_y
-            tf_goal.pos[2] = goal_z
+                if (-166.0 <= angle) and (angle <= 166.0):
+                    valid_cnt += 1
 
-            try:
-                ik = serial_chain.inverse_kinematics(tf_goal)
-            except:
-                return errs
+            elif joint_name == "panda_joint2":
+                if (-101.0 <= angle) and (angle <= 101.0):
+                    valid_cnt += 1
 
-            joints = serial_chain.get_joint_parameter_names()
-            valid_cnt = 0
+            elif joint_name == "panda_joint4":
+                if (-176.0 <= angle) and (angle <= -4.0):
+                    valid_cnt += 1
 
-            for i, joint_angle in enumerate(ik):
-                joint_name = joints[i]
-                angle = math.degrees(joint_angle)
+            elif joint_name == "panda_joint6":
+                if (-1.0 <= angle) and (angle <= 215.0):
+                    valid_cnt += 1
 
-                if (joint_name == "panda_joint1" or
-                    joint_name == "panda_joint3" or
-                    joint_name == "panda_joint5" or
-                    joint_name == "panda_joint7"):
-
-                    if (-166.0 <= angle) and (angle <= 166.0):
-                        valid_cnt += 1
-
-                elif joint_name == "panda_joint2":
-                    if (-101.0 <= angle) and (angle <= 101.0):
-                        valid_cnt += 1
-
-                elif joint_name == "panda_joint4":
-                    if (-176.0 <= angle) and (angle <= -4.0):
-                        valid_cnt += 1
-
-                elif joint_name == "panda_joint6":
-                    if (-1.0 <= angle) and (angle <= 215.0):
-                        valid_cnt += 1
-
-            if valid_cnt == len(joints):
-                errs.append(f"controller failed to find inverse kinematics solution: {ik}")
+        if valid_cnt == len(joints):
+            errs.append(f"controller failed to find inverse kinematics solution: {ik}")
 
     return errs
-

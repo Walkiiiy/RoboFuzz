@@ -20,22 +20,69 @@ class RuntimeConfig:
 
         self.replay = False
 
+        self.method = None
+        self.fuzz_mode = None
+        self.log_dir = None
+        self.queue_dir = None
+        self.error_dir = None
+        self.cov_dir = None
+        self.meta_dir = None
+        self.rosbag_dir = None
+        self.maxloop = None
+        self.interval = 1.0
+        self.repeat = 1
+        self.schedule = None
+        self.seqlen = 1
+        self.seed = None
+        self.debug_wait = False
+        self.no_cov = False
+
         self.persistent = False
         self.rospkg = None
         self.rosnode = None
         self.exec_cmd = None
+        self.watchlist = None
         self.target_node = None
+        self.target_name = None
+        self.target_config = None
+        self.target_warmup_sec = 0.0
 
         self.px4_sitl = False
+        self.px4_ros = False
+        self.use_mavlink = False
+        self.exp_pgfuzz = False
+        self.flight_mode = None
+        self.px4_mission_file = None
         self.tb3_sitl = False
         self.tb3_hitl = False
+        self.tb3_uri = None
         self.sros2 = False
+        self.sros2_keystore = None
+        self.sros2_enable = None
+        self.sros2_strategy = None
+        self.sros2_enclave = None
         self.test_rcl = False
+        self.rcl_api = None
+        self.test_rcl_feature = []
+        self.test_rcl_job = None
+        self.test_rcl_targets = []
+        self.test_cli = False
+        self.test_moveit = False
+        self.test_rosidl = False
+        self.test_rosidl_lang = None
+        self.test_rosidl_shmid = None
         self.nav2_amcl = False
         self.post_pub_sleep = 0.0
         self.nav2_scan_len = 360
         self.nav2_map_default_width = 384
         self.nav2_map_default_height = 384
+        self.fuzz_seed = None
+
+        self.pkg_prefix = None
+        self.pkg_src_dir = None
+        self.ros_prefix = None
+        self.pkg_cov_dir = None
+        self.node_executable = None
 
     def find_package_metadata(self):
         # read from provided meta file

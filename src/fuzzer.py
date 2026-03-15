@@ -23,6 +23,7 @@ from collections import deque
 from copy import deepcopy
 import json
 import shutil
+import traceback as tbmod
 
 import numpy as np
 import sysv_ipc as ipc
@@ -39,6 +40,8 @@ from executor import Executor, ExecMode
 from scheduler import Scheduler, Campaign
 from feedback import Feedback, FeedbackType
 from target_manager import TargetManager
+from target_plugins import BaseTargetPlugin
+import error_recorder
 
 import rclpy
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
@@ -76,6 +79,14 @@ class Fuzzer:
         self.client = None
         self.shm = None
         self.shm_data = None
+        self.last_execution_summary = {}
+        self.queue = deque()
+        self.executor = None
+        self.px4_bridge = None
+        self.display = None
+        self.ros_pgrp = None
+        self.state_monitor_pgrp = None
+        self.running = False
 
     def _is_managed_target(self):
         return bool(getattr(self.config, "target_name", None) and self.target_manager)
@@ -225,7 +236,7 @@ class Fuzzer:
         self.running = True
 
     def kill_target(self):
-        if not self.running:
+        if not getattr(self, "running", False):
             print("[-] nothing to kill")
             return
 
@@ -238,13 +249,17 @@ class Fuzzer:
 
     def kill_monitor(self):
         # kill state monitor
+        proc = getattr(self, "state_monitor_pgrp", None)
+        if proc is None:
+            print("[-] state monitor not initialized")
+            return
         try:
             print("killing state monitor")
-            os.killpg(self.state_monitor_pgrp.pid, signal.SIGKILL)
+            os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError as e:
             print("[-] state monitor killpg error:", e)
-        except AttributeError as e:
-            print("[-] state monitor not initialized:", e)
+        finally:
+            self.state_monitor_pgrp = None
 
     def destroy(self):
         # kill target if still exists
@@ -258,10 +273,11 @@ class Fuzzer:
             for sub in self.subs:
                 self.node_ptr.destroy_subscription(sub)
 
-        try:
-            self.display.stop()
-        except AttributeError:
-            pass
+        if self.display is not None:
+            try:
+                self.display.stop()
+            except Exception:
+                pass
 
         if self.shm is not None:
             if self.shm.attached:
@@ -514,6 +530,23 @@ def nav2_amcl_adjust_msg(fuzzer, msg):
 
 
 def fuzz_msg(fuzzer, fuzz_targets):
+    def log_case(frame, errors, msg_list=None, state_dict=None, extra=None):
+        err_file = os.path.join(
+            fuzzer.config.error_dir, f"error-{frame}"
+        )
+        with open(err_file, "a") as fp:
+            fp.write(str(errors))
+
+        error_recorder.record_error_case(
+            fuzzer.config,
+            frame,
+            errors,
+            fuzzer=fuzzer,
+            msg_list=msg_list,
+            state_dict=state_dict,
+            extra=extra,
+        )
+
     def normalize_whitelist(cfg_whitelist):
         if cfg_whitelist is None:
             return None
@@ -822,12 +855,14 @@ def fuzz_msg(fuzzer, fuzz_targets):
 
                         # log early errs
                         if errs:
-                            err_file = os.path.join(
-                                fuzzer.config.error_dir, f"error-{frame}"
+                            log_case(
+                                frame,
+                                errs,
+                                extra={
+                                    "stage": "rosidl_pre_publish",
+                                    "expecting": expecting,
+                                },
                             )
-
-                            with open(err_file, "a") as fp:
-                                fp.write(str(errs))
 
                     else:
                         print("[+] Expected error caught:")
@@ -843,12 +878,14 @@ def fuzz_msg(fuzzer, fuzz_targets):
 
                         # log early errs
                         if errs:
-                            err_file = os.path.join(
-                                fuzzer.config.error_dir, f"error-{frame}"
+                            log_case(
+                                frame,
+                                errs,
+                                extra={
+                                    "stage": "rosidl_pre_publish",
+                                    "unexpected_error": error,
+                                },
                             )
-
-                            with open(err_file, "a") as fp:
-                                fp.write(str(errs))
 
                         continue
 
@@ -883,6 +920,14 @@ def fuzz_msg(fuzzer, fuzz_targets):
             executor.prep_execution(msg_type_class, topic_name)
 
             # register pre_exec functions and custom publisher function
+            plugin_publish = None
+            if (
+                fuzzer.target_plugin is not None
+                and type(fuzzer.target_plugin).publish_message
+                is not BaseTargetPlugin.publish_message
+            ):
+                plugin_publish = fuzzer.target_plugin.publish_message
+
             if fuzzer.config.px4_sitl:
                 collision_checker = checker.CollisionChecker()
                 collision_topics = [
@@ -965,6 +1010,11 @@ def fuzz_msg(fuzzer, fuzz_targets):
                 post_exec_list = None
                 pub_function = harness.moveit_send_command
 
+            elif plugin_publish is not None:
+                pre_exec_list = None
+                post_exec_list = None
+                pub_function = plugin_publish
+
             else:
                 pre_exec_list = None
                 post_exec_list = None
@@ -974,23 +1024,51 @@ def fuzz_msg(fuzzer, fuzz_targets):
             if fuzzer.config.test_rcl or fuzzer.config.test_cli:
                 wait_lock = ".waitlock"
 
-            (retval, failure_msg) = executor.execute(
-                mode,
-                msg_list,
-                frame,
-                frequency,
-                repeat,
-                pre_exec_list=pre_exec_list,
-                post_exec_list=post_exec_list,
-                pub_function=pub_function,
-                wait_lock=wait_lock,
-            )
+            try:
+                (retval, failure_msg) = executor.execute(
+                    mode,
+                    msg_list,
+                    frame,
+                    frequency,
+                    repeat,
+                    pre_exec_list=pre_exec_list,
+                    post_exec_list=post_exec_list,
+                    pub_function=pub_function,
+                    wait_lock=wait_lock,
+                )
+            except Exception as exec_err:
+                log_case(
+                    frame,
+                    [f"execution failed: {exec_err}"],
+                    msg_list=msg_list,
+                    extra={
+                        "stage": "execute",
+                        "exception_type": type(exec_err).__name__,
+                        "traceback": tbmod.format_exc(),
+                    },
+                )
+                raise
             # fuzzer.oh_.check_oracle() # will move everything into checker
             # (turtlesim, sros, ...)
             executor.clear_execution()
             fuzzer.loop += 1
+            fuzzer.last_execution_summary.update(
+                {
+                    "target_node": subscriber_node,
+                    "cycle": scheduler.cycle_cnt,
+                    "round": scheduler.round_cnt,
+                    "frame": frame,
+                }
+            )
 
             if retval:
+                failure_errors = [f"publish failed: {failure_msg}"]
+                log_case(
+                    frame,
+                    failure_errors,
+                    msg_list=msg_list,
+                    extra={"stage": "publish"},
+                )
                 raise RuntimeError(f"publish failed: {failure_msg}")
 
             state_dict_list = []
@@ -1002,10 +1080,22 @@ def fuzz_msg(fuzzer, fuzz_targets):
                 )
 
                 if parser.abort:
+                    log_case(
+                        frame,
+                        ["corrupted recorded states. abort."],
+                        msg_list=msg_list,
+                        extra={"stage": "rosbag_parse"},
+                    )
                     raise RuntimeError("corrupted recorded states. abort.")
 
                 state_msgs_dict = parser.process_messages()
                 if len(state_msgs_dict) == 0:
+                    log_case(
+                        frame,
+                        ["watch failed: no messages captured in watch window"],
+                        msg_list=msg_list,
+                        extra={"stage": "rosbag_parse"},
+                    )
                     raise RuntimeError(
                         "watch failed: no messages captured in watch window"
                     )
@@ -1095,12 +1185,24 @@ def fuzz_msg(fuzzer, fuzz_targets):
                     fuzzer.target_plugin.post_exec_hook()
 
             if errs:
-                err_file = os.path.join(
-                    fuzzer.config.error_dir, f"error-{frame}"
+                observation_summary = error_recorder.summarize_state_dict(state_msgs_dict)
+                extra = {
+                    "stage": "oracle",
+                    "feedback": [
+                        {"name": fbk.name, "value": fbk.value}
+                        for fbk in fbk_list
+                    ],
+                    "diagnostics_max_level": observation_summary[
+                        "diagnostics_summary"
+                    ]["max_level"],
+                }
+                log_case(
+                    frame,
+                    errs,
+                    msg_list=msg_list,
+                    state_dict=state_msgs_dict,
+                    extra=extra,
                 )
-
-                with open(err_file, "a") as fp:
-                    fp.write(str(errs))
 
                 for exec_cnt in range(repeat):
                     # copy rosbags to {log_dir}/rosbags/{frame}/
@@ -1123,12 +1225,13 @@ def fuzz_msg(fuzzer, fuzz_targets):
                 )
 
                 if rpt_errs:
-                    err_file = os.path.join(
-                        fuzzer.config.error_dir, f"error-{frame}"
+                    rpt_list = list(set(rpt_errs))
+                    log_case(
+                        frame,
+                        rpt_list,
+                        msg_list=msg_list,
+                        extra={"stage": "repeatability"},
                     )
-
-                    with open(err_file, "a") as fp:
-                        fp.write(str(set(rpt_errs)))
 
             is_interesting = False
             for fbk in fbk_list:
