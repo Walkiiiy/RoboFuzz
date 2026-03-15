@@ -26,6 +26,7 @@ class TargetManager:
         self.targets_roots = self._get_candidate_target_roots()
         self.registry: Dict[str, dict] = {}
         self.process_map: Dict[str, sp.Popen] = {}
+        self._deps_checked = set()
         self._scan_targets()
 
     def _get_candidate_target_roots(self):
@@ -192,8 +193,11 @@ class TargetManager:
         return cfg.get("fuzzing", {}).get("feedback", [])
 
     def ensure_target_dependencies(self, target_name: str) -> None:
+        if target_name in self._deps_checked:
+            return
         cfg = self.get_target_config(target_name)
         self._ensure_target_installed(cfg)
+        self._deps_checked.add(target_name)
 
     def _is_ros_pkg_available(self, ros_pkg: str) -> bool:
         if not ros_pkg:
@@ -283,13 +287,19 @@ class TargetManager:
             time.sleep(warmup)
 
         if proc.poll() is not None:
+            stdout = ""
             stderr = ""
+            try:
+                stdout = proc.stdout.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
             try:
                 stderr = proc.stderr.read().decode("utf-8", errors="ignore")
             except Exception:
                 pass
             raise RuntimeError(
                 f"target '{target_name}' exited during startup (code={proc.returncode}). "
+                f"stdout:\n{stdout[-800:]}\n"
                 f"stderr:\n{stderr[-800:]}"
             )
 

@@ -1,4 +1,4 @@
-ekf_filter_node:
+/**:
   ros__parameters:
     frequency: 30.0
     sensor_timeout: 0.2
@@ -23,7 +23,5 @@ ekf_filter_node:
     imu0_remove_gravitational_acceleration: false
     imu0_queue_size: 10
 
-    use_control: false
     print_diagnostics: true
-    permit_corrected_publication: true
     reset_on_time_jump: true
