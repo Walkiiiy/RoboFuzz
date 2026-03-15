@@ -17,6 +17,11 @@
   "fuzzing": {
     "default_topic": "/imu/data",
     "default_msg_type": "sensor_msgs/msg/Imu",
+    "poisoning": {
+      "quat_prob": 0.1,
+      "cov_prob": 0.2,
+      "time_prob": 0.05
+    },
     "field_whitelist": [
       [
         "orientation",
@@ -84,6 +89,10 @@
   },
   "monitoring": {
     "watchlist": "watchlist.json",
-    "plugin": "plugin.py"
+    "plugin": "plugin.py",
+    "allow_empty_watch": true
+  },
+  "runtime": {
+    "post_pub_sleep": 2.0
   }
 }

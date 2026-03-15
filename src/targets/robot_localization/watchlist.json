@@ -1,4 +1,5 @@
 [
+  "/imu/data",
   "/odometry/filtered",
   "/diagnostics"
 ]

@@ -21,8 +21,13 @@ class TargetPlugin(BaseTargetPlugin):
         if type(msg).__name__ != "Imu":
             return msg
 
+        poisoning = self.target_config.get("fuzzing", {}).get("poisoning", {})
+        p_quat = self._cfg_float(poisoning.get("quat_prob"), 0.10)
+        p_cov = self._cfg_float(poisoning.get("cov_prob"), 0.20)
+        p_time = self._cfg_float(poisoning.get("time_prob"), 0.05)
+
         # Quaternion singularity poisoning.
-        if random.random() < 0.25:
+        if random.random() < p_quat:
             sel = random.randint(0, 2)
             if sel == 0:
                 msg.orientation.x = 0.0
@@ -60,15 +65,15 @@ class TargetPlugin(BaseTargetPlugin):
                     arr[i] = random.uniform(_MAX_COV_DIAG, _MAX_COV_DIAG * 100.0)
             return arr
 
-        if random.random() < 0.35:
+        if random.random() < p_cov:
             msg.orientation_covariance = poison_cov(msg.orientation_covariance)
-        if random.random() < 0.35:
+        if random.random() < p_cov:
             msg.angular_velocity_covariance = poison_cov(msg.angular_velocity_covariance)
-        if random.random() < 0.35:
+        if random.random() < p_cov:
             msg.linear_acceleration_covariance = poison_cov(msg.linear_acceleration_covariance)
 
         # Time desynchronization poisoning.
-        if random.random() < 0.15:
+        if random.random() < p_time:
             if random.random() < 0.5:
                 self._safe_set_stamp(msg, 0, 1)
             else:
@@ -85,9 +90,18 @@ class TargetPlugin(BaseTargetPlugin):
     def check_oracle(self, config, msg_list, state_dict, feedback_list):
         errs = []
 
+        imu_samples = state_dict.get("/imu/data", [])
         odom_samples = state_dict.get("/odometry/filtered", [])
         if not odom_samples:
-            errs.append("liveness: /odometry/filtered has no messages")
+            if imu_samples:
+                errs.append(
+                    "liveness: /imu/data observed but /odometry/filtered has no messages"
+                )
+            else:
+                errs.append(
+                    "pipeline: neither /imu/data nor /odometry/filtered captured "
+                    "(publish path, rosbag window, or topic mismatch)"
+                )
             return errs
 
         odom_samples = sorted(odom_samples, key=lambda x: x[0])
@@ -176,6 +190,12 @@ class TargetPlugin(BaseTargetPlugin):
                 return default
         try:
             return int(value)
+        except Exception:
+            return default
+
+    def _cfg_float(self, value, default):
+        try:
+            return float(value)
         except Exception:
             return default
 
