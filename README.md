@@ -118,6 +118,13 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 - 可选加载 `targets/<name>/plugin.py`（需导出 `TargetPlugin` 类）
 - 未提供插件时，会自动回退到默认 `checker.run_checks` 路径
 
+### 4.5 关于 `targets/` 与 `src/targets/` 两个目录
+- 当前仓库保留两套目录是为了兼容两类运行方式：
+- `targets/`：仓库根目录下的“主配置目录”，`run_robofuzz.sh` 会挂载它到容器并通过 `ROBOFUZZ_TARGETS_DIR` 优先加载。
+- `src/targets/`：历史路径兼容目录，便于直接在 `src/` 工作目录运行旧流程。
+- `TargetManager` 的加载优先级是：`ROBOFUZZ_TARGETS_DIR` > `<proj_root>/targets` > `src/targets` > 当前工作目录附近的 `targets`。
+- 建议只编辑根目录 `targets/`，并保持与 `src/targets/` 同步。
+
 ## 5. 核心模块接口清单
 
 ### 5.1 `src/config.py`
@@ -249,6 +256,9 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
   },
   "lifecycle": {
     "managed": true,
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 pkg prefix your_pkg >/dev/null",
+    "skip_ros_pkg_check": false,
     "start_cmd": "ros2 launch your_pkg your.launch.py",
     "stop_cmd": "pkill -f your_pkg",
     "warmup_sec": 5.0
@@ -274,6 +284,9 @@ RoboFuzz 是一个面向 ROS 2 / 机器人系统的语义级 fuzz 框架。它�
 说明：
 - `lifecycle.managed=true`：由 `TargetManager.start_target/stop_target` 托管
 - `lifecycle.managed=false`：复用现有 legacy 启停逻辑（便于平滑迁移）
+- `lifecycle.install_script`：依赖缺失时自动执行；脚本不存在或执行失败会直接报错退出
+- `lifecycle.verify_cmd`：运行前健康检查（例如类型支持、接口可用性）；失败会触发安装流程
+- `lifecycle.skip_ros_pkg_check=true`：用于非标准 ROS 包目标（如 legacy harness 目标），仅依赖 `verify_cmd`
 - `runtime`：可把布尔开关注入 `RuntimeConfig`（如 `test_moveit`, `px4_sitl` 等）
 
 ### 第 3 步：按需实现 `plugin.py`
@@ -451,19 +464,9 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 ### 10.14 `targets/`（配置化目标）
 
 - `target_config.schema.json`：目标配置 schema
+- `_shared/install_with_apt.sh`：通用依赖安装与校验 helper
 - `README.md`：目标示例索引
-- `nav2_amcl/`：示例（含 `plugin.py`）
-- `turtlesim/`：示例配置
-- `turtlebot3_sitl/`：示例配置
-- `turtlebot3_hitl/`：示例配置
-- `moveit2/`：示例配置
-- `px4_sitl_ros/`：示例配置
-- `px4_sitl_mav/`：示例配置
-- `px4_sitl_pgfuzz/`：示例配置
-- `rosidl/`：示例配置
-- `rcl_api/`：示例配置
-- `cli_api/`：示例配置
-- `sros2/`：示例配置（含本地 watchlist）
+- 每个目标目录均包含 `config.json` + `install.sh`（`nav2_amcl` 还包含 `plugin.py`）
 
 ## 11. 当前代码状态与后续改进建议
 
@@ -495,6 +498,11 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 ## 12. 常用命令参考
 
 以下命令均基于新接口 `--target`，覆盖当前 `targets/` 下所有项目模块示例。
+
+统一行为说明：
+- 每个 target 都配置了 `lifecycle.install_script` 和 `lifecycle.verify_cmd`。
+- 运行前若依赖未满足，会先自动执行 `targets/<name>/install.sh`。
+- 若安装脚本不存在、执行失败，或安装后 `verify_cmd` 仍失败，程序会直接报错退出，不会进入假运行。
 
 ### 12.1 Turtlesim(tested)
 

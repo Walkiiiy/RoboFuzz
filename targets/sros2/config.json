@@ -6,7 +6,10 @@
   },
   "lifecycle": {
     "managed": false,
-    "warmup_sec": 2.0
+    "warmup_sec": 2.0,
+    "install_script": "install.sh",
+    "verify_cmd": "python3 -c \"import rclpy\" && ros2 security --help >/dev/null 2>&1",
+    "skip_ros_pkg_check": true
   },
   "fuzzing": {
     "default_topic": "/sros2_input",

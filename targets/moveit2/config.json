@@ -6,22 +6,57 @@
   },
   "lifecycle": {
     "managed": false,
-    "warmup_sec": 10.0
+    "warmup_sec": 10.0,
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 pkg prefix moveit2_tutorials >/dev/null",
+    "skip_ros_pkg_check": false
   },
   "fuzzing": {
     "default_topic": "/metatopic",
     "default_msg_type": "geometry_msgs/msg/Pose",
     "field_whitelist": [
-      ["position", "x", "float64"],
-      ["position", "y", "float64"],
-      ["position", "z", "float64"]
+      [
+        "position",
+        "x",
+        "float64"
+      ],
+      [
+        "position",
+        "y",
+        "float64"
+      ],
+      [
+        "position",
+        "z",
+        "float64"
+      ]
     ],
     "feedback": [
-      {"name": "end_point_deviation", "type": "INC", "default": 0.0},
-      {"name": "mean_joint_pos_error", "type": "INC", "default": 0.0},
-      {"name": "max_joint_pos_error", "type": "INC", "default": 0.0},
-      {"name": "mean_joint_vel_error", "type": "INC", "default": 0.0},
-      {"name": "max_joint_vel_error", "type": "INC", "default": 0.0}
+      {
+        "name": "end_point_deviation",
+        "type": "INC",
+        "default": 0.0
+      },
+      {
+        "name": "mean_joint_pos_error",
+        "type": "INC",
+        "default": 0.0
+      },
+      {
+        "name": "max_joint_pos_error",
+        "type": "INC",
+        "default": 0.0
+      },
+      {
+        "name": "mean_joint_vel_error",
+        "type": "INC",
+        "default": 0.0
+      },
+      {
+        "name": "max_joint_vel_error",
+        "type": "INC",
+        "default": 0.0
+      }
     ]
   },
   "monitoring": {

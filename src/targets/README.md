@@ -1,19 +1,23 @@
 # Target Examples
 
-本目录提供 RoboFuzz 原有项目的配置化示例。每个子目录至少包含 `config.json`。
+本目录提供 RoboFuzz 的配置化目标示例。每个目标子目录都包含：
+- `config.json`：目标配置
+- `install.sh`：依赖安装与校验脚本
+- 可选 `plugin.py`：目标专属 hook/oracle
 
-- `turtlesim`: 对应原 `--ros-pkg turtlesim --ros-node turtlesim_node`
-- `turtlebot3_sitl`: 对应原 `--tb3-sitl`
-- `turtlebot3_hitl`: 对应原 `--tb3-hitl`
-- `moveit2`: 对应原 `--test-moveit`
-- `px4_sitl_ros`: 对应原 `--px4-sitl-ros`
-- `px4_sitl_mav`: 对应原 `--px4-sitl-mav`
-- `px4_sitl_pgfuzz`: 对应原 `--px4-sitl-pgfuzz`
-- `rosidl`: 对应原 `--test-rosidl`
-- `rcl_api`: 对应原 `--test-rcl`
-- `cli_api`: 对应原 `--test-cli`
-- `sros2`: 对应原 `--sros2`
-- `nav2_amcl`: 新增配置化示例（含 `plugin.py`）
+包含目标：
+- `turtlesim`
+- `turtlebot3_sitl`
+- `turtlebot3_hitl`
+- `moveit2`
+- `nav2_amcl`
+- `px4_sitl_ros`
+- `px4_sitl_mav`
+- `px4_sitl_pgfuzz`
+- `rosidl`
+- `rcl_api`
+- `cli_api`
+- `sros2`
 
 运行方式（示例）：
 
@@ -22,6 +26,11 @@ cd src
 python3 fuzzer.py --target turtlesim --schedule single --method message --no-cov
 ```
 
-说明：
-- `lifecycle.managed=false` 的目标继续复用现有 `fuzzer.py` 里的 legacy 启停/harness 分支。
-- `lifecycle.managed=true`（或设置 `start_cmd`）的目标由 `TargetManager.start_target()` 统一托管。
+依赖处理规则：
+- 运行前先执行 `lifecycle.verify_cmd` 健康检查。
+- 检查失败时，自动执行 `lifecycle.install_script`。
+- 若脚本不存在、执行失败、或安装后仍未通过检查，立即报错退出，不会进入假运行。
+
+目录说明：
+- 根目录 `targets/` 是主配置目录，容器启动脚本会优先挂载并加载它。
+- `src/targets/` 是兼容镜像目录，建议与根目录保持同步。

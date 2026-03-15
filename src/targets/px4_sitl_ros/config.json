@@ -6,23 +6,53 @@
   },
   "lifecycle": {
     "managed": false,
-    "warmup_sec": 10.0
+    "warmup_sec": 10.0,
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 interface show px4_msgs/msg/TrajectorySetpoint >/dev/null",
+    "skip_ros_pkg_check": true
   },
   "fuzzing": {
     "default_topic": "/TrajectorySetpoint_PubSubTopic",
     "default_msg_type": "px4_msgs/msg/TrajectorySetpoint",
     "field_whitelist": [
-      ["yaw", "float64"],
-      ["yawspeed", "float64"],
-      ["vx", "float64"],
-      ["vy", "float64"],
-      ["vz", "float64"]
+      [
+        "yaw",
+        "float64"
+      ],
+      [
+        "yawspeed",
+        "float64"
+      ],
+      [
+        "vx",
+        "float64"
+      ],
+      [
+        "vy",
+        "float64"
+      ],
+      [
+        "vz",
+        "float64"
+      ]
     ],
     "feedback": [
-      {"name": "imu_accel_inconsistency", "type": "INC"},
-      {"name": "imu_gyro_inconsistency", "type": "INC"},
-      {"name": "gps_lat_inconsistency", "type": "INC"},
-      {"name": "gps_lon_inconsistency", "type": "INC"}
+      {
+        "name": "imu_accel_inconsistency",
+        "type": "INC"
+      },
+      {
+        "name": "imu_gyro_inconsistency",
+        "type": "INC"
+      },
+      {
+        "name": "gps_lat_inconsistency",
+        "type": "INC"
+      },
+      {
+        "name": "gps_lon_inconsistency",
+        "type": "INC"
+      }
     ]
   },
   "monitoring": {

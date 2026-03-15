@@ -6,7 +6,10 @@
   },
   "lifecycle": {
     "managed": false,
-    "warmup_sec": 2.0
+    "warmup_sec": 2.0,
+    "install_script": "install.sh",
+    "verify_cmd": "python3 -c \"import rclpy\"",
+    "skip_ros_pkg_check": true
   },
   "fuzzing": {
     "default_topic": "rcl_topic",
@@ -17,8 +20,13 @@
   },
   "runtime": {
     "test_rcl": true,
-    "test_rcl_feature": ["publisher"],
-    "test_rcl_targets": ["py", "cpp"],
+    "test_rcl_feature": [
+      "publisher"
+    ],
+    "test_rcl_targets": [
+      "py",
+      "cpp"
+    ],
     "test_rcl_job": "create_publisher"
   }
 }

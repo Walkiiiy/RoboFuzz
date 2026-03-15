@@ -21,6 +21,9 @@
     "lifecycle": {
       "type": "object",
       "properties": {
+        "install_script": {"type": "string"},
+        "verify_cmd": {"type": "string"},
+        "skip_ros_pkg_check": {"type": "boolean"},
         "start_cmd": {"type": "string"},
         "exec_cmd": {"type": "string"},
         "stop_cmd": {"type": "string"},

@@ -6,7 +6,10 @@
   },
   "lifecycle": {
     "managed": false,
-    "warmup_sec": 1.0
+    "warmup_sec": 1.0,
+    "install_script": "install.sh",
+    "verify_cmd": "python3 -c \"import rosidl_runtime_py; import rosidl_generator_py\"",
+    "skip_ros_pkg_check": true
   },
   "fuzzing": {
     "default_topic": "/metatopic",

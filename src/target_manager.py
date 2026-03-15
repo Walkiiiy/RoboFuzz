@@ -191,9 +191,78 @@ class TargetManager:
         cfg = self.get_target_config(target_name)
         return cfg.get("fuzzing", {}).get("feedback", [])
 
+    def ensure_target_dependencies(self, target_name: str) -> None:
+        cfg = self.get_target_config(target_name)
+        self._ensure_target_installed(cfg)
+
+    def _is_ros_pkg_available(self, ros_pkg: str) -> bool:
+        if not ros_pkg:
+            return True
+        ret = sp.call(
+            ["ros2", "pkg", "prefix", ros_pkg],
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+        )
+        return ret == 0
+
+    def _run_verify_cmd(self, target_cfg: dict) -> bool:
+        verify_cmd = target_cfg.get("lifecycle", {}).get("verify_cmd")
+        if not verify_cmd:
+            return True
+        ret = sp.call(
+            verify_cmd,
+            shell=True,
+            cwd=target_cfg["target_dir"],
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+        )
+        return ret == 0
+
+    def _ensure_target_installed(self, target_cfg: dict) -> None:
+        lifecycle = target_cfg.get("lifecycle", {})
+        ros_pkg = target_cfg.get("basic", {}).get("ros_pkg", "")
+        skip_ros_pkg_check = bool(lifecycle.get("skip_ros_pkg_check", False))
+        pkg_ready = skip_ros_pkg_check or (not ros_pkg) or self._is_ros_pkg_available(ros_pkg)
+
+        if pkg_ready and self._run_verify_cmd(target_cfg):
+            return
+
+        install_rel = lifecycle.get("install_script")
+        if not install_rel:
+            raise RuntimeError(
+                f"target '{target_cfg['name']}' requires ROS package '{ros_pkg}', "
+                "but no lifecycle.install_script is configured"
+            )
+
+        install_path = self.resolve_target_path(target_cfg, install_rel)
+        if not os.path.isfile(install_path):
+            raise FileNotFoundError(
+                f"install script not found for target '{target_cfg['name']}': {install_path}"
+            )
+
+        print(f"[target_manager] package '{ros_pkg}' not found, installing via {install_path}")
+        ret = sp.call(
+            ["bash", install_path],
+            cwd=target_cfg["target_dir"],
+        )
+        if ret != 0:
+            raise RuntimeError(
+                f"install script failed for target '{target_cfg['name']}' (exit={ret})"
+            )
+
+        if (not skip_ros_pkg_check) and (not self._is_ros_pkg_available(ros_pkg)):
+            raise RuntimeError(
+                f"target '{target_cfg['name']}' install completed but ROS package '{ros_pkg}' is still missing"
+            )
+        if not self._run_verify_cmd(target_cfg):
+            raise RuntimeError(
+                f"target '{target_cfg['name']}' install completed but lifecycle.verify_cmd failed"
+            )
+
     def start_target(self, target_name: str):
         cfg = self.get_target_config(target_name)
         lifecycle = cfg.get("lifecycle", {})
+        self._ensure_target_installed(cfg)
 
         start_cmd = lifecycle.get("start_cmd") or lifecycle.get("exec_cmd")
         if not start_cmd:
@@ -211,6 +280,17 @@ class TargetManager:
         warmup = float(lifecycle.get("warmup_sec", 0))
         if warmup > 0:
             time.sleep(warmup)
+
+        if proc.poll() is not None:
+            stderr = ""
+            try:
+                stderr = proc.stderr.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"target '{target_name}' exited during startup (code={proc.returncode}). "
+                f"stderr:\n{stderr[-800:]}"
+            )
 
         return proc
 

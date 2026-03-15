@@ -220,6 +220,11 @@ class Fuzzer:
         )
 
     def run_target(self, ros_pkg, ros_node, exec_cmd):
+        if getattr(self.config, "target_name", None):
+            self.target_manager.ensure_target_dependencies(
+                self.config.target_name
+            )
+
         if self._is_managed_target():
             print(f"[*] Starting configured target: {self.config.target_name}")
             self.ros_pgrp = self.target_manager.start_target(

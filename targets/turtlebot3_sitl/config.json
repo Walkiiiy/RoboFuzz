@@ -6,17 +6,31 @@
   },
   "lifecycle": {
     "managed": false,
-    "warmup_sec": 10.0
+    "warmup_sec": 10.0,
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 pkg prefix turtlebot3_gazebo >/dev/null",
+    "skip_ros_pkg_check": false
   },
   "fuzzing": {
     "default_topic": "/cmd_vel",
     "default_msg_type": "geometry_msgs/msg/Twist",
     "field_whitelist": [
-      ["angular", "z", "float64"],
-      ["linear", "x", "float64"]
+      [
+        "angular",
+        "z",
+        "float64"
+      ],
+      [
+        "linear",
+        "x",
+        "float64"
+      ]
     ],
     "feedback": [
-      {"name": "theta_diff", "type": "INC"}
+      {
+        "name": "theta_diff",
+        "type": "INC"
+      }
     ]
   },
   "monitoring": {

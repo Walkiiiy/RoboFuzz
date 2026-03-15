@@ -6,7 +6,10 @@
   },
   "lifecycle": {
     "managed": false,
-    "warmup_sec": 10.0
+    "warmup_sec": 10.0,
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 interface show px4_msgs/msg/ParameterSetValueRequest >/dev/null",
+    "skip_ros_pkg_check": true
   },
   "fuzzing": {
     "default_topic": "/dummy_mavlink_topic",
