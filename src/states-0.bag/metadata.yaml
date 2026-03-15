@@ -4,10 +4,10 @@ rosbag2_bagfile_information:
   relative_file_paths:
     - states-0.bag_0.db3
   duration:
-    nanoseconds: 3070191312
+    nanoseconds: 4000443963
   starting_time:
-    nanoseconds_since_epoch: 1773559692189609590
-  message_count: 8
+    nanoseconds_since_epoch: 1773562044969399501
+  message_count: 10
   topics_with_message_count:
     - topic_metadata:
         name: /odometry/filtered
@@ -16,10 +16,16 @@ rosbag2_bagfile_information:
         offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 2147483647\n    nsec: 4294967295\n  lifespan:\n    sec: 2147483647\n    nsec: 4294967295\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 2147483647\n    nsec: 4294967295\n  avoid_ros_namespace_conventions: false"
       message_count: 0
     - topic_metadata:
+        name: /imu/data
+        type: sensor_msgs/msg/Imu
+        serialization_format: cdr
+        offered_qos_profiles: ""
+      message_count: 1
+    - topic_metadata:
         name: /diagnostics
         type: diagnostic_msgs/msg/DiagnosticArray
         serialization_format: cdr
         offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 2147483647\n    nsec: 4294967295\n  lifespan:\n    sec: 2147483647\n    nsec: 4294967295\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 2147483647\n    nsec: 4294967295\n  avoid_ros_namespace_conventions: false"
-      message_count: 8
+      message_count: 9
   compression_format: ""
   compression_mode: ""

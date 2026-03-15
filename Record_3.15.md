@@ -1,0 +1,4 @@
+- 统一接口，用config，install，plugin，watchlist四个文件接入新的fuzz模块
+    - robot_localization moveIT turtlesim找到新的漏洞
+- 接入大模型自动写oracle
+    - 

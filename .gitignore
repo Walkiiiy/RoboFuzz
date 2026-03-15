@@ -8,3 +8,7 @@
 fuzzing_keys
 __pycache__
 logs
+log
+out
+*.log
+states-0.bag
