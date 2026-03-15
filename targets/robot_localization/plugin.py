@@ -73,7 +73,7 @@ class TargetPlugin(BaseTargetPlugin):
                 msg.header.stamp.sec = 0
                 msg.header.stamp.nanosec = 1
             else:
-                msg.header.stamp.sec = 4_000_000_000 - 1
+                msg.header.stamp.sec = 2_147_483_647
                 msg.header.stamp.nanosec = 999_999_999
 
         return msg
@@ -107,15 +107,41 @@ class TargetPlugin(BaseTargetPlugin):
         # Optional diagnostics channel.
         for _, diag in state_dict.get("/diagnostics", []):
             for status in getattr(diag, "status", []):
-                if getattr(status, "level", 0) >= 2:
+                level = self._to_int(getattr(status, "level", 0), default=0)
+                if level >= 2:
                     errs.append(
-                        f"diagnostics: level={status.level} name={status.name} msg={status.message}"
+                        f"diagnostics: level={level} name={status.name} msg={status.message}"
                     )
 
         return list(set(errs))
 
     def _is_finite(self, x):
         return not (math.isnan(x) or math.isinf(x))
+
+    def _to_int(self, value, default=0):
+        if isinstance(value, int):
+            return value
+        if isinstance(value, bytes):
+            if len(value) == 0:
+                return default
+            if len(value) == 1:
+                return value[0]
+            try:
+                value = value.decode("utf-8", errors="ignore").strip()
+            except Exception:
+                return default
+        if isinstance(value, str):
+            value = value.strip()
+            if value == "":
+                return default
+            try:
+                return int(value, 10)
+            except ValueError:
+                return default
+        try:
+            return int(value)
+        except Exception:
+            return default
 
     def _check_math_poison(self, errs, msg):
         vals = [

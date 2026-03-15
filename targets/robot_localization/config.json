@@ -6,7 +6,7 @@
   },
   "lifecycle": {
     "install_script": "install.sh",
-    "verify_cmd": "bash -lc \"source /opt/ros/foxy/setup.bash; if [ -f /robofuzz/robot_localization_ws/install/setup.bash ]; then source /robofuzz/robot_localization_ws/install/setup.bash; fi; timeout 6s ros2 run robot_localization ekf_node --ros-args --params-file /opt/ros/foxy/share/robot_localization/params/ekf.yaml >/tmp/robot_localization_verify.log 2>&1; rc=\\$?; test \\$rc -eq 124\"",
+    "verify_cmd": "bash -lc \"source /opt/ros/foxy/setup.bash; if [ -f /robofuzz/robot_localization_ws/install/setup.bash ]; then source /robofuzz/robot_localization_ws/install/setup.bash; fi; python3 -c \\\"from rosidl_generator_py.import_type_support_impl import import_type_support; import_type_support('std_msgs'); import_type_support('geometry_msgs'); import_type_support('sensor_msgs')\\\"; timeout 6s ros2 run robot_localization ekf_node --ros-args --params-file /opt/ros/foxy/share/robot_localization/params/ekf.yaml >/tmp/robot_localization_verify.log 2>&1; rc=\\$?; test \\$rc -eq 124\"",
     "skip_ros_pkg_check": false,
     "start_cmd": "bash -lc \"source /opt/ros/foxy/setup.bash; if [ -f /robofuzz/robot_localization_ws/install/setup.bash ]; then source /robofuzz/robot_localization_ws/install/setup.bash; fi; ros2 run robot_localization ekf_node --ros-args --params-file params/ekf.yaml\"",
     "stop_cmd": "pkill -f \"robot_localization.*ekf\" || true",

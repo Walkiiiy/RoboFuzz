@@ -12,6 +12,27 @@ if ! command -v ros2 >/dev/null 2>&1; then
   exit 1
 fi
 
+SUDO=""
+if [[ "$(id -u)" -ne 0 ]]; then
+  SUDO="sudo"
+fi
+
+type_support_check() {
+  set +e
+  bash -lc "
+    source /opt/ros/foxy/setup.bash
+    python3 - <<'PY'
+from rosidl_generator_py.import_type_support_impl import import_type_support
+for pkg in ('std_msgs', 'geometry_msgs', 'sensor_msgs'):
+    import_type_support(pkg)
+print('ok')
+PY
+  " >/tmp/robot_localization_typesupport.log 2>&1
+  rc=$?
+  set -e
+  [[ "$rc" -eq 0 ]]
+}
+
 smoke_check() {
   set +e
   bash -lc "
@@ -39,13 +60,44 @@ if [[ -f "$HELPER" ]]; then
   TARGET_NAME="$TARGET_NAME" bash "$HELPER" \
     'ros2 pkg prefix robot_localization >/dev/null && ros2 pkg executables robot_localization | grep -Eq "(^|[[:space:]])(ekf_node|ukf_node)$"' \
     ros-foxy-robot-localization \
+    ros-foxy-builtin-interfaces \
+    ros-foxy-std-msgs \
     ros-foxy-geometry-msgs \
     ros-foxy-nav-msgs \
     ros-foxy-sensor-msgs \
+    ros-foxy-rosidl-runtime-c \
+    ros-foxy-rosidl-runtime-cpp \
+    ros-foxy-rosidl-generator-c \
+    ros-foxy-rosidl-generator-py \
+    ros-foxy-rosidl-typesupport-interface \
+    ros-foxy-rosidl-typesupport-c \
+    ros-foxy-rosidl-typesupport-cpp \
+    ros-foxy-rosidl-typesupport-fastrtps-c \
+    ros-foxy-rosidl-typesupport-fastrtps-cpp \
     ros-foxy-tf2 \
     ros-foxy-tf2-ros
 else
   echo "[${TARGET_NAME}] helper not found, continuing with direct recovery" >&2
+fi
+
+if ! type_support_check; then
+  echo "[${TARGET_NAME}] repairing broken ROS type support chain"
+  ${SUDO} apt-get update
+  ${SUDO} apt-get install -y --reinstall \
+    ros-foxy-builtin-interfaces \
+    ros-foxy-std-msgs \
+    ros-foxy-geometry-msgs \
+    ros-foxy-sensor-msgs \
+    ros-foxy-rosidl-runtime-c \
+    ros-foxy-rosidl-runtime-cpp \
+    ros-foxy-rosidl-generator-c \
+    ros-foxy-rosidl-generator-py \
+    ros-foxy-rosidl-typesupport-interface \
+    ros-foxy-rosidl-typesupport-c \
+    ros-foxy-rosidl-typesupport-cpp \
+    ros-foxy-rosidl-typesupport-fastrtps-c \
+    ros-foxy-rosidl-typesupport-fastrtps-cpp
+  ${SUDO} ldconfig || true
 fi
 
 if smoke_check; then
@@ -54,11 +106,6 @@ if smoke_check; then
 fi
 
 echo "[${TARGET_NAME}] apt package still crashes, trying source build fallback"
-
-SUDO=""
-if [[ "$(id -u)" -ne 0 ]]; then
-  SUDO="sudo"
-fi
 
 ${SUDO} apt-get update
 ${SUDO} apt-get install -y \
