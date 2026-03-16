@@ -7,6 +7,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile
 
 from sensor_msgs.msg import CameraInfo, Image
 
@@ -14,8 +15,9 @@ from sensor_msgs.msg import CameraInfo, Image
 class PairPublisher(Node):
     def __init__(self) -> None:
         super().__init__("image_proc_pair_publisher")
-        self.image_pub = self.create_publisher(Image, "/camera/image_raw", 10)
-        self.info_pub = self.create_publisher(CameraInfo, "/camera/camera_info", 10)
+        qos = QoSProfile(depth=10)
+        self.image_pub = self.create_publisher(Image, "/camera/image_raw", qos)
+        self.info_pub = self.create_publisher(CameraInfo, "/camera/camera_info", qos)
 
 
 def build_messages(payload):
@@ -61,7 +63,17 @@ def main(argv=None):
     node = PairPublisher()
     try:
         img, info = build_messages(payload)
-        deadline = time.time() + 0.6
+        attach_deadline = time.time() + 3.0
+        while time.time() < attach_deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+            if (
+                node.image_pub.get_subscription_count() >= 1
+                and node.info_pub.get_subscription_count() >= 1
+            ):
+                break
+            time.sleep(0.05)
+
+        deadline = time.time() + 2.0
         while time.time() < deadline:
             node.info_pub.publish(info)
             node.image_pub.publish(img)

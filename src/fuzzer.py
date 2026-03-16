@@ -1072,6 +1072,7 @@ def fuzz_msg(fuzzer, fuzz_targets):
                 raise RuntimeError(f"publish failed: {failure_msg}")
 
             state_dict_list = []
+            capture_failed = False
             # repeated campaigns result in multiple bag files
             for exec_cnt in range(repeat):
 
@@ -1096,9 +1097,8 @@ def fuzz_msg(fuzzer, fuzz_targets):
                         msg_list=msg_list,
                         extra={"stage": "rosbag_parse"},
                     )
-                    raise RuntimeError(
-                        "watch failed: no messages captured in watch window"
-                    )
+                    capture_failed = True
+                    break
 
                 # state_dict = checker.group_msgs_by_topic(state_msgs_dict)
 
@@ -1183,6 +1183,10 @@ def fuzz_msg(fuzzer, fuzz_targets):
 
                 if fuzzer.target_plugin:
                     fuzzer.target_plugin.post_exec_hook()
+
+            if capture_failed:
+                print("[fuzzer] watch window empty; recorded as error and continuing")
+                continue
 
             if errs:
                 observation_summary = error_recorder.summarize_state_dict(state_msgs_dict)

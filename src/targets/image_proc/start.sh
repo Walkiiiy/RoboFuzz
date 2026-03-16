@@ -22,20 +22,16 @@ dump_logs_and_fail() {
 
 trap cleanup EXIT INT TERM
 
-ros2 run image_proc rectify_node \
-  --ros-args \
-  -r image:=/camera/image_raw \
-  -r camera_info:=/camera/camera_info \
-  -r image_rect:=/camera/image_rect >>"$PROC_LOG" 2>&1 &
+ros2 launch image_proc image_proc.launch.py >>"$PROC_LOG" 2>&1 &
 PROC_PID=$!
 
 node_ready=0
 for _ in $(seq 1 20); do
   if ! kill -0 "$PROC_PID" 2>/dev/null; then
-    dump_logs_and_fail "rectify_node exited during startup"
+    dump_logs_and_fail "image_proc launch exited during startup"
   fi
 
-  if ros2 node list 2>/dev/null | grep -q '/rectify_node'; then
+  if ros2 node list 2>/dev/null | grep -q '^/RectifyNode$'; then
     node_ready=1
     break
   fi
@@ -44,12 +40,12 @@ for _ in $(seq 1 20); do
 done
 
 if [[ "$node_ready" -eq 0 ]]; then
-  dump_logs_and_fail "/rectify_node never appeared"
+  dump_logs_and_fail "/RectifyNode never appeared"
 fi
 
 while true; do
   if ! kill -0 "$PROC_PID" 2>/dev/null; then
-    dump_logs_and_fail "rectify_node exited after startup"
+    dump_logs_and_fail "image_proc launch exited after startup"
   fi
   sleep 1
 done

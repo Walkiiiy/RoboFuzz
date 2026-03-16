@@ -2,7 +2,7 @@
   "name": "image_proc",
   "basic": {
     "ros_pkg": "image_proc",
-    "ros_node": "rectify_node"
+    "ros_node": "RectifyNode"
   },
   "lifecycle": {
     "managed": false,

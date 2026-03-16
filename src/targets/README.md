@@ -137,9 +137,51 @@ set -euo pipefail
 
 ## 7. 新目标接入流程（一步一步）
 
-1. 新建目录：`src/targets/<name>/`
-2. 复制模板并完成：`config.json`、`plugin.py`、`watchlist.json`、`install.sh`
-3. 本地检查：
+以后新增 target，默认按下面这个顺序做，**不要先凭记忆或文档印象直接写 `watchlist.json`**。
+
+### 第 1 步：先只写 `install.sh`
+
+先把依赖安装和 `verify_cmd` 跑通，再谈 target 接入。
+
+原因：
+- 很多“看起来像 topic 结构问题”的错误，本质上是包没装完整、类型支持不齐，或者宿主启动方式与本地环境不一致
+- 如果安装都没验证，后面的 `config/watchlist/plugin` 很容易建立在错误假设上
+
+### 第 2 步：在真实运行中的容器/环境里探图
+
+安装完成后，**先手工启动目标**，然后在真实 ROS graph 上查询：
+
+```bash
+ros2 node list
+ros2 topic list
+ros2 node info <node_name>
+ros2 topic info <topic_name>
+```
+
+必须先确认三件事：
+- 真实节点名是什么
+- 真实输入 topic 是什么
+- 真实输出 topic 是什么
+
+这一点很重要：
+- `watchlist` 里的 topic 不能靠“包名、教程、印象、launch 文件猜测”来写
+- 必须优先以**当前容器里真实运行起来后的 ROS graph**为准
+
+### 第 3 步：再写 `config.json`、`watchlist.json`、`plugin.py`
+
+只有在第 2 步确认真实图结构后，才去写：
+
+- `config.json`
+- `watchlist.json`
+- `plugin.py`
+
+其中：
+- `config.json` 里的 `basic.ros_node` 应写真实节点名
+- `fuzzing.default_topic` 应写真实输入 topic
+- `watchlist.json` 应只放真实存在且 oracle 真要看的输出 topic
+- `plugin.py` 的发布逻辑也必须按真实输入 topic / 配套 topic 来写
+
+### 第 4 步：本地静态检查
 
 ```bash
 jq empty src/targets/<name>/config.json
@@ -147,13 +189,13 @@ python3 -m py_compile src/targets/<name>/plugin.py
 bash -n src/targets/<name>/install.sh
 ```
 
-4. 先手工安装（如有依赖）：
+### 第 5 步：先手工安装（如有依赖）
 
 ```bash
 bash src/targets/<name>/install.sh
 ```
 
-5. 运行 fuzz：
+### 第 6 步：运行 fuzz
 
 ```bash
 cd src
@@ -178,6 +220,17 @@ python3 fuzzer.py --target <name> --method message --schedule single --no-cov
 - 不要只看“目标已启动”
 - 要看输入之后，watchlist 中是否出现了预期的下游 topic
 - 如果只录到初始化 topic，而始终没有动态输出，优先怀疑接入方式，而不是 oracle
+
+补充一个非常具体的要求：
+- 以后不要先写 `watchlist.json` 再去验证
+- 正确顺序是：
+  - 先装依赖
+  - 先在真实运行中的容器里查 `ros2 node list / node info / topic list`
+  - 最后再写 `config/watchlist/plugin`
+
+`image_proc` 的接入过程就是一个反例：
+- 如果不先看真实 ROS graph，很容易把 `watchlist` 写成“文档上看起来合理、运行时却没有消息”的幻觉 topic
+- 这种错误表面上像 oracle 太敏感，实际上是接入拓扑一开始就写偏了
 
 2. plugin 不要每轮都主动制造强语义破坏
 - `pre_exec_hook()` 应该先构造稳定、合法的基线消息

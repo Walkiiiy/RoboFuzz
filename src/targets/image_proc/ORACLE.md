@@ -1,7 +1,7 @@
 # image_proc Oracle 设计说明
 
 `image_proc` 是典型的 ROS 上层感知处理节点。  
-这里接入的是 `rectify_node`，它消费原始图像与相机内参，并输出校正后的图像。
+这里接入的是容器内官方 `image_proc.launch.py` 拉起的 `RectifyNode`，它消费原始图像与相机内参，并输出校正后的图像。
 
 ## 1. 设计目标
 

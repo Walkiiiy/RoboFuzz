@@ -4,7 +4,7 @@
 
 宿主场景：
 
-- `image_proc rectify_node`
+- `ros2 launch image_proc image_proc.launch.py`
 
 输入：
 

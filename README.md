@@ -325,7 +325,40 @@ python3 -m false_analyzer.cli \
 - `src/targets/new_robot/config.json`
 - `src/targets/new_robot/plugin.py`（必需）
 
-### 第 2 步：编写 `config.json`
+### 第 2 步：先只写 `install.sh`，先把依赖装通
+
+新增 target 时，**不要先拍脑袋写 `watchlist` 和 `plugin`**。  
+先把 `install.sh` 和 `verify_cmd` 做好，并在真实环境里完成依赖安装与校验。
+
+推荐先跑：
+
+```bash
+bash src/targets/<name>/install.sh
+```
+
+### 第 3 步：在真实运行环境里探图
+
+安装完成后，先手工启动目标，然后在**真实运行中的容器/ROS graph** 上查询：
+
+```bash
+ros2 node list
+ros2 topic list
+ros2 node info <node_name>
+ros2 topic info <topic_name>
+```
+
+只有在这一步确认了真实结构后，才去写：
+
+- `basic.ros_node`
+- `fuzzing.default_topic`
+- `watchlist.json`
+- `plugin.py` 里的自定义发布/观察逻辑
+
+这条规则很重要：
+- `watchlist` 里的 topic 不能凭文档、launch 文件、印象来猜
+- 必须以当前容器里真实运行后的 ROS graph 为准
+
+### 第 4 步：编写 `config.json`
 
 最小模板：
 
@@ -371,7 +404,7 @@ python3 -m false_analyzer.cli \
 - `lifecycle.skip_ros_pkg_check=true`：用于非标准 ROS 包目标，仅依赖 `verify_cmd`
 - `runtime`：可把布尔开关注入 `RuntimeConfig`（如 `test_moveit`, `px4_sitl` 等）
 
-### 第 3 步：按需实现 `plugin.py`
+### 第 5 步：按需实现 `plugin.py`
 
 插件需导出 `TargetPlugin(BaseTargetPlugin)`，可覆写：
 - `pre_exec_hook(msg)`：发布前消息修正
@@ -379,7 +412,7 @@ python3 -m false_analyzer.cli \
 - `check_oracle(...)`：自定义语义校验
 - 插件为必需项；缺失会在启动阶段直接报错退出。
 
-### 第 4 步：执行与验证
+### 第 6 步：执行与验证
 
 ```bash
 cd src
@@ -392,6 +425,20 @@ python3 fuzzer.py --target new_robot --method message --schedule single --no-cov
 - `watchlist` 录包有效
 - oracle 输出可解释错误
 - 回归样本可复现（`logs/.../queue` + `rosbags`）
+
+### 一个明确的反例经验
+
+`image_proc` 的接入过程说明了一件事：
+
+- 即使 topic 名看起来“很合理”
+- 即使它和官方 launch / 教程名字很像
+- 只要没有先在真实容器里查 `ros2 node info` 和 `ros2 topic list`
+- 写出来的 `watchlist` 仍然可能是幻觉
+
+所以以后默认流程应当是：
+1. 先写 `install.sh`
+2. 安装完成后，在真实运行环境里查询节点与话题结构
+3. 再写 `config.json`、`watchlist.json`、`plugin.py`
 
 ## 10. 逐文件说明（全量）
 
