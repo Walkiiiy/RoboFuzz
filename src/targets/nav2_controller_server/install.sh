@@ -31,10 +31,9 @@ VERIFY_CMD='
   ros2 interface show geometry_msgs/msg/Twist >/dev/null &&
   ros2 interface show nav_msgs/msg/Odometry >/dev/null &&
   ros2 interface show nav2_msgs/action/FollowPath >/dev/null &&
-  ros2 interface show nav2_msgs/msg/ControllerInfo >/dev/null &&
   python3 - <<'"'"'PY'"'"' >/dev/null
 from rosidl_generator_py.import_type_support_impl import import_type_support
-for pkg in ("geometry_msgs", "nav_msgs", "nav2_msgs"):
+for pkg in ("std_msgs", "geometry_msgs", "nav_msgs", "nav2_msgs"):
     import_type_support(pkg)
 PY
 '
@@ -50,6 +49,17 @@ TARGET_NAME="nav2_controller_server" bash "$HELPER" \
   ros-foxy-turtlebot3-msgs \
   ros-foxy-turtlebot3-gazebo \
   ros-foxy-turtlebot3-navigation2 \
+  ros-foxy-std-msgs \
+  ros-foxy-builtin-interfaces \
   ros-foxy-geometry-msgs \
   ros-foxy-nav-msgs \
-  ros-foxy-sensor-msgs
+  ros-foxy-sensor-msgs \
+  ros-foxy-rosidl-generator-py \
+  ros-foxy-rosidl-runtime-c \
+  ros-foxy-rosidl-runtime-cpp \
+  ros-foxy-rosidl-generator-c \
+  ros-foxy-rosidl-typesupport-interface \
+  ros-foxy-rosidl-typesupport-c \
+  ros-foxy-rosidl-typesupport-cpp \
+  ros-foxy-rosidl-typesupport-fastrtps-c \
+  ros-foxy-rosidl-typesupport-fastrtps-cpp

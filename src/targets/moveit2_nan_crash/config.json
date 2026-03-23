@@ -1,0 +1,34 @@
+{
+  "name": "moveit2_nan_crash",
+  "basic": {
+    "ros_pkg": "moveit_resources_panda_moveit_config",
+    "ros_node": "move_group"
+  },
+  "lifecycle": {
+    "managed": true,
+    "install_script": "install.sh",
+    "verify_cmd": "bash -lc \"source /opt/ros/foxy/setup.bash && ros2 pkg prefix moveit >/dev/null && ros2 pkg prefix moveit_resources_panda_moveit_config >/dev/null\"",
+    "skip_ros_pkg_check": false,
+    "start_cmd": "bash -lc \"source /opt/ros/foxy/setup.bash; ros2 launch moveit_resources_panda_moveit_config demo.launch.py rviz_tutorial:=True > /tmp/moveit2_nan_crash_target.log 2>&1\"",
+    "stop_cmd": "pkill -f \"moveit_resources_panda_moveit_config demo.launch.py\" || true; pkill -f \"move_group\" || true; pkill -f \"rviz2\" || true",
+    "warmup_sec": 15.0
+  },
+  "fuzzing": {
+    "default_topic": "/planning_scene",
+    "default_msg_type": "moveit_msgs/msg/PlanningScene",
+    "field_whitelist": [
+      ["is_diff", "bool"],
+      ["robot_state", "is_diff", "bool"]
+    ]
+  },
+  "monitoring": {
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
+  },
+  "runtime": {
+    "persistent": true,
+    "post_pub_sleep": 0.2,
+    "moveit_nan_joint_count": 7,
+    "moveit_nan_low_tf_threshold": 1
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "/display_planned_path": "moveit_msgs/msg/DisplayTrajectory",
+  "/tf": "tf2_msgs/msg/TFMessage"
+}

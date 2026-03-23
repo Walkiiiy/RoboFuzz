@@ -1,0 +1,4 @@
+{
+  "/global_costmap/costmap": "nav_msgs/msg/OccupancyGrid",
+  "/map": "nav_msgs/msg/OccupancyGrid"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "nav2_deadlock_3109",
+  "basic": {
+    "ros_pkg": "nav2_bringup",
+    "ros_node": "planner_server"
+  },
+  "lifecycle": {
+    "managed": true,
+    "install_script": "install.sh",
+    "verify_cmd": "ros2 pkg prefix nav2_bringup >/dev/null && ros2 pkg prefix turtlebot3_gazebo >/dev/null && ros2 interface show nav_msgs/msg/OccupancyGrid >/dev/null",
+    "skip_ros_pkg_check": false,
+    "start_cmd": "bash -lc \"source /opt/ros/foxy/setup.bash; cp /opt/ros/foxy/share/nav2_bringup/params/nav2_params.yaml /tmp/nav2_deadlock_3109_params.yaml; sed -i 's|yaml_filename: .*|yaml_filename: \\\"/opt/ros/foxy/share/nav2_bringup/maps/turtlebot3_world.yaml\\\"|' /tmp/nav2_deadlock_3109_params.yaml; sed -i 's/use_sim_time: True/use_sim_time: False/g' /tmp/nav2_deadlock_3109_params.yaml; sed -i 's/update_frequency: 1.0/update_frequency: 5.0/g' /tmp/nav2_deadlock_3109_params.yaml; sed -i 's/publish_frequency: 1.0/publish_frequency: 5.0/g' /tmp/nav2_deadlock_3109_params.yaml; ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map base_link >/tmp/nav2_deadlock_tf.log 2>&1 & ros2 run nav2_map_server map_server --ros-args -r __node:=map_server --params-file /tmp/nav2_deadlock_3109_params.yaml >/tmp/nav2_deadlock_map.log 2>&1 & ros2 run nav2_planner planner_server --ros-args -r __node:=planner_server --params-file /tmp/nav2_deadlock_3109_params.yaml >/tmp/nav2_deadlock_planner.log 2>&1 & ros2 run nav2_lifecycle_manager lifecycle_manager --ros-args -r __node:=lifecycle_manager_nav3109 -p use_sim_time:=False -p autostart:=True -p node_names:='[map_server,planner_server]' >/tmp/nav2_deadlock_lm.log 2>&1 & while true; do sleep 3600; done\"",
+    "stop_cmd": "pkill -x planner_server || true; pkill -x map_server || true; pkill -x lifecycle_manager || true; pkill -x static_transform_publisher || true; pkill -x gzserver || true; pkill -x gzclient || true; pkill -x gazebo || true",
+    "warmup_sec": 15.0
+  },
+  "fuzzing": {
+    "default_topic": "/map",
+    "default_msg_type": "nav_msgs/msg/OccupancyGrid",
+    "field_whitelist": [
+      ["info", "width", "uint32"],
+      ["info", "height", "uint32"],
+      ["info", "resolution", "float32"]
+    ]
+  },
+  "monitoring": {
+    "watchlist": "watchlist.json",
+    "plugin": "plugin.py"
+  },
+  "runtime": {
+    "persistent": true,
+    "post_pub_sleep": 0.8,
+    "deadlock_default_resolution": 0.05,
+    "deadlock_min_dimension": 64,
+    "deadlock_max_dimension": 128,
+    "deadlock_max_cells": 4096,
+    "deadlock_min_costmap_msgs_per_round": 3,
+    "deadlock_stale_round_threshold": 3
+  }
+}

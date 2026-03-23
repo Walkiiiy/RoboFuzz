@@ -999,6 +999,9 @@ class Scheduler:
                             f"[scheduler] failed to generate valid value for "
                             f"{'.'.join(attr_list)}; keeping default"
                         )
+                        # Keep deterministic mutator stable even if this field
+                        # cannot accept direct scalar assignment (e.g., arrays).
+                        data_val = mutator.gen_rand_data(dtype, True)
                     self.fm_odata.append(data_val)
 
                     # set rest of the fields (rfield) to default
@@ -1257,14 +1260,40 @@ class Scheduler:
             obj = reduce(getattr, attr_list[:-1], msg)
             data_val = getattr(obj, attr_leaf)
             # print("data before msg mutation:", data_val)
-            data_val = mutator.mutate_one(
-                dtype,
-                data_val,
-                determ_stage,
-                random.randint(0, bit_size - 1),
-                arith_val,
-                interesting_idx,
-            )
+            try:
+                data_val = mutator.mutate_one(
+                    dtype,
+                    data_val,
+                    determ_stage,
+                    random.randint(0, bit_size - 1),
+                    arith_val,
+                    interesting_idx,
+                )
+            except Exception as exc:
+                print(
+                    f"[scheduler] skip invalid mutation for "
+                    f"{'.'.join(attr_list)} (msg-all): {exc}"
+                )
+                self.num_msg_mutation += 1
+                if self.num_msg_mutation == 20:
+                    print("end of cycle")
+                    self.cycle_cnt += 1
+                    self.is_new_cycle = True
+                    self.round_cnt = 0
+
+                    # reset counters
+                    self.cur_fm_field = 0
+                    self.fm_field_stages = [0] * self.num_fields
+                    self.fm_determ_stages = [0] * self.num_fields
+                    fm_rand_stages = []
+                    for i in range(self.num_fields):
+                        fm_rand_stages.append(random.randint(1, 2))
+                    self.fm_odata = []
+                    self.num_msg_mutation = 0
+                    self.bit_pos = 0
+                    self.arith_val = -35
+                    self.interesting_idx = 0
+                return (None, frame)
             # print("data after msg mutation:", data_val)
             if data_val is not None:
                 if not self._assign_attr_value(
